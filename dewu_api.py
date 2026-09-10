@@ -136,6 +136,7 @@ class LoginResult:
     token: str
     response_text: str
     success: bool
+    headers: dict = None
 
 
 @dataclass
@@ -610,10 +611,9 @@ def login_dewu_with_captcha(
         'v': VERSION,
     }
     new_sign = build_post_new_sign(payload, timestamp)
-    payload['newSign'] = new_sign
-
+    # newSign 放 query（与 sendCaptcha 抓包一致；放body服务端验签可能读不到→10001）
     response = requests.post(
-        url,
+        f"{url}?newSign={new_sign}",
         json=payload,
         headers=_login_headers(timestamp, token),
         timeout=timeout,
@@ -647,6 +647,7 @@ def login_dewu_with_captcha(
         token=auth_token,
         response_text=text,
         success=(str(code) == "200"),
+        headers=dict(response.headers),
     )
 
 

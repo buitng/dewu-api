@@ -131,6 +131,9 @@ def api_login():
             log(f'登录成功: {phone} ({result.user_name})')
         if not result.success:
             msg = result.response_text[:200]
+            # 完整响应+响应头记入日志（排查风控错误码用，页面只显示摘要）
+            log(f'登录原始响应: {result.response_text}')
+            log(f'登录响应头: {result.headers if hasattr(result, "headers") else "(未记录)"}')
             try:
                 code = str(json.loads(result.response_text).get('code') or '')
             except Exception:
