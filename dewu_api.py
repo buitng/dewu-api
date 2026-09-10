@@ -387,7 +387,7 @@ def _login_headers(timestamp: str, token: str) -> dict:
         'isProxy': "1",
         'isRoot': "0",
         'ltk': DEVICE_LTK,
-        'rtk': "A58rSdVApBgxO5l6Ns5U166L23M6",
+        # 真机user_core抓包样本无rtk头（固定旧值+新随机设备=矛盾风控信号，10001主嫌疑）
         'shumeiid': SHUMEII,
         'skc': DEVICE_SKC,
         'sks': "0,adw2",
