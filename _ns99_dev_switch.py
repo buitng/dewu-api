@@ -12,16 +12,10 @@ if variant == "shumeiid":
     # 仅换数美设备 ID
     D.SHUMEII = secrets.token_hex(32)  # 64 hex
     print(f"[variant] SHUMEII -> {D.SHUMEII}")
-elif variant == "full":
-    # 换数美 ID + ltk + adi + skc（全新设备标识，格式仿原值）
-    D.SHUMEII = secrets.token_hex(32)
-    D.DEVICE_LTK = secrets.token_urlsafe(22)[:30]
-    D.DEVICE_ADI = secrets.token_urlsafe(24)[:32]
-    D.DEVICE_SKC = secrets.token_urlsafe(15)[:21]
-    print(f"[variant] SHUMEII={D.SHUMEII}")
-    print(f"[variant] LTK={D.DEVICE_LTK}")
-    print(f"[variant] ADI={D.DEVICE_ADI}")
-    print(f"[variant] SKC={D.DEVICE_SKC}")
+elif variant == "full2":
+    # 整套随机设备（dewu_api.randomize_device：机型+UA+全部标识）
+    snap = D.randomize_device()
+    print(f"[variant] randomize_device -> {snap}")
 else:
     print(f"[variant] baseline（原设备）")
 

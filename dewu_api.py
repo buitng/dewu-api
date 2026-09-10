@@ -48,6 +48,51 @@ DEVICE_SKC = "6FXSz7s4Q4PzF9gORByIT"
 UUID_FIXED = "e450d85844d139e3"
 VERSION = "5.60.0"
 
+# ==================== 设备身份随机化 ====================
+# 实验实证（_ns99）：服务端风控锚点=shumeiid，随机新ID即放行不触发485滑块；
+# 整套外壳（机型/UA/标识族）同步随机化，格式仿真，降低原真机指纹复用风险
+import secrets as _secrets
+
+_DEVICE_MODELS = [
+    # (brand, trait, android_ver)  brand 大写用于 Build 串
+    ("HUAWEI", "HMA-AL00", 12),
+    ("XIAOMI", "M2012K11AC", 12),
+    ("XIAOMI", "MI 9", 11),
+    ("samsung", "SM-G9910", 13),
+    ("OPPO", "PEYM00", 12),
+    ("vivo", "V2218A", 13),
+    ("HUAWEI", "NOH-AN00", 12),
+    ("OnePlus", "LE2110", 13),
+]
+
+_B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def _rnd_str(n: int) -> str:
+    return "".join(_secrets.choice(_B62) for _ in range(n))
+
+
+def randomize_device() -> dict:
+    """整套随机设备身份：机型外壳(UA/brand/trait) + 全部设备标识。返回当前值快照"""
+    global USER_AGENT, FULL_UA, DEVICE_BRAND, DEVICE_TRAIT, SHUMEII
+    global DEVICE_SK, DEVICE_LTK, DEVICE_ADI, DEVICE_SKC, UUID_FIXED
+    brand, trait, av = _secrets.choice(_DEVICE_MODELS)
+    DEVICE_BRAND = brand.capitalize()
+    DEVICE_TRAIT = trait
+    USER_AGENT = f"duapp/{VERSION}(android;{av})"
+    FULL_UA = (f"Dalvik/2.1.0 (Linux; U; Android {av}; {trait} "
+               f"Build/{brand}.{trait.replace(' ', '')}-{av})/duapp/{VERSION}(android;{av})")
+    SHUMEII = _secrets.token_hex(32)                       # 数美设备ID（风控锚点，已实证随机即过）
+    DEVICE_SK = _rnd_str(len(DEVICE_SK))
+    DEVICE_LTK = _rnd_str(30)
+    DEVICE_ADI = _rnd_str(32)
+    DEVICE_SKC = _rnd_str(21)
+    UUID_FIXED = _secrets.token_hex(8)                     # iaid
+    return {
+        'brand': DEVICE_BRAND, 'trait': DEVICE_TRAIT, 'android': av,
+        'shumeiid': SHUMEII[:16] + "...", 'ua': USER_AGENT,
+    }
+
 # 数美sign（旧明文form sendCaptcha用，随body提交）
 SIGN_FIXED = "7141a0b174c0282e3c7c93d999df751f"
 
