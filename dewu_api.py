@@ -605,15 +605,17 @@ def login_dewu_with_captcha(
         'countryCode': 86,
         'loginToken': "",
         'platform': "android",
-        'timestamp': timestamp,
+        'timestamp': str(timestamp),  # 真机抓包实证：user_core body的timestamp是字符串
         'type': "code",
         'userName': encrypted_mobile,
         'v': VERSION,
     }
     new_sign = build_post_new_sign(payload, timestamp)
-    # newSign 放 query（与 sendCaptcha 抓包一致；放body服务端验签可能读不到→10001）
+    # 真机getVisitorUserId样本实证：user_core域newSign放body（ice域sendCaptcha才放query）
+    payload['newSign'] = new_sign
+
     response = requests.post(
-        f"{url}?newSign={new_sign}",
+        url,
         json=payload,
         headers=_login_headers(timestamp, token),
         timeout=timeout,
