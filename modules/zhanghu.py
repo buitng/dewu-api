@@ -9,7 +9,8 @@ from datetime import datetime
 
 from flask import Blueprint, request, jsonify
 
-from dewu_api import send_dewu_captcha, login_dewu_with_captcha, risk_stone_call, risk_stone_verify
+from dewu_api import (send_dewu_captcha, login_dewu_with_captcha,
+                      risk_stone_call, risk_stone_verify, randomize_device)
 from modules.cunchu import state
 from modules.rizhi import log
 
@@ -23,9 +24,11 @@ def api_send_captcha():
     if not phone:
         return jsonify({'success': False, 'message': '手机号不能为空'})
     try:
-        # 复用上次发码的init token（485滑块后重试与抓包一致：同会话token重发）
-        init_token = state.pending_captcha_tokens.get(phone)
-        result = send_dewu_captcha(phone, init_token=init_token)
+        # 每次发码前更换整套设备身份（实证：换shumeiid即可绕过485滑块，整套随机更稳）
+        dev = randomize_device()
+        log(f"已更换设备: {dev['brand']} {dev['trait']} (Android {dev['android']}) shumeiid={dev['shumeiid']}")
+        # 新设备不复用旧init token（旧token属于上一个设备会话，复用会上下文不一致）
+        result = send_dewu_captcha(phone)
         # 无论成功或485，都记录token：485重试需复用同一token上下文
         state.pending_captcha_tokens[phone] = result.token
         resp = {
