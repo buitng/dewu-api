@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>得物蓝V自动发布工具</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #f5f5f5; color: #333; }
+        .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 22px; }
+        .header .status { font-size: 14px; opacity: 0.8; }
+        .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        
+        .tabs { display: flex; gap: 2px; background: #e0e0e0; border-radius: 8px 8px 0 0; overflow: hidden; }
+        .tab { padding: 12px 24px; background: #f0f0f0; cursor: pointer; border: none; font-size: 15px; transition: all 0.2s; }
+        .tab.active { background: white; font-weight: 600; color: #1a1a2e; }
+        .tab:hover:not(.active) { background: #e8e8e8; }
+        
+        .panel { background: white; padding: 24px; border-radius: 0 0 8px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); min-height: 400px; display: none; }
+        .panel.active { display: block; }
+        
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; margin-bottom: 6px; font-weight: 500; color: #555; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; transition: border-color 0.2s; }
+        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #1a1a2e; }
+        
+        .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; transition: all 0.2s; font-weight: 500; }
+        .btn-primary { background: #1a1a2e; color: white; } .btn-primary:hover { background: #16213e; }
+        .btn-success { background: #27ae60; color: white; } .btn-success:hover { background: #219a52; }
+        .btn-danger { background: #e74c3c; color: white; } .btn-warning { background: #f39c12; color: white; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .row { display: flex; gap: 12px; align-items: flex-end; }
+        .row .form-group { flex: 1; }
+        
+        .account-list { margin-top: 16px; }
+        .account-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 8px; }
+        .account-item .info { flex: 1; } .account-item .phone { font-weight: 600; }
+        .account-item .user { font-size: 13px; color: #888; margin-top: 2px; }
+        .account-item.current { border-color: #1a1a2e; background: #f8f9ff; }
+        
+        .log-box { background: #1a1a2e; color: #0f0; padding: 16px; border-radius: 6px; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; height: 300px; overflow-y: auto; margin-top: 16px; }
+        
+        .task-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        .task-table th, .task-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
+        .task-table th { background: #f8f8f8; font-weight: 600; }
+        
+        .status-badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+        .status-pending { background: #f39c12; color: white; } .status-running { background: #3498db; color: white; }
+        .status-success { background: #27ae60; color: white; } .status-failed { background: #e74c3c; color: white; }
+        
+        .alert { padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
+        .alert-info { background: #d1ecf1; color: #0c5460; } .alert-success { background: #d4edda; color: #155724; }
+        .alert-error { background: #f8d7da; color: #721c24; }
+        
+        .stats { display: flex; gap: 16px; margin-bottom: 16px; }
+        .stat-card { flex: 1; background: #f8f9ff; padding: 16px; border-radius: 8px; text-align: center; }
+        .stat-card .num { font-size: 28px; font-weight: 700; color: #1a1a2e; }
+        .stat-card .label { font-size: 13px; color: #888; margin-top: 4px; }
+        
+        .queue-box { margin-top: 20px; padding: 16px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
+        .queue-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 8px; margin-bottom: 10px; }
+        .queue-grid input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .queue-item { border: 1px solid #eee; border-radius: 6px; padding: 10px; margin-bottom: 8px; background: #fff; }
+
+        /* 滑块验证模态框 */
+        .slider-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .slider-mask.show { display: flex; }
+        .slider-modal { background: white; border-radius: 10px; padding: 20px; width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .slider-modal h4 { margin-bottom: 4px; }
+        .slider-modal .sub { font-size: 12px; color: #888; margin-bottom: 12px; }
+        .slider-canvas { position: relative; width: 340px; height: 212px; background: #f0f0f0; border-radius: 6px; overflow: hidden; margin-bottom: 12px; }
+        .slider-canvas img.bg { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .slider-canvas img.piece { position: absolute; top: 0; left: 0; height: 100%; display: none; }
+        .slider-track { position: relative; width: 340px; height: 40px; background: #f0f0f0; border-radius: 20px; margin-bottom: 10px; }
+        .slider-track .tip { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #999; user-select: none; }
+        .slider-knob { position: absolute; top: 0; left: 0; width: 40px; height: 40px; background: #1a1a2e; border-radius: 50%; cursor: grab; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; touch-action: none; }
+        .slider-fill { position: absolute; top: 0; left: 0; height: 100%; width: 0; background: #d6e4ff; border-radius: 20px 0 0 20px; }
+        .slider-status { font-size: 13px; min-height: 18px; margin-top: 6px; }
+        .queue-item.running { background: #e7f3ff; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>得物蓝V自动发布工具</h1>
+        <div class="status" id="headerStatus">未登录</div>
+    </div>
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" data-tab="account" onclick="switchTab('account', this)">账号设置</button>
+            <button class="tab" data-tab="publish" onclick="switchTab('publish', this)">图文发布</button>
+            <button class="tab" data-tab="video" onclick="switchTab('video', this)">视频发布</button>
+            <button class="tab" data-tab="material" onclick="switchTab('material', this)">素材库</button>
+            <button class="tab" data-tab="log" onclick="switchTab('log', this)">操作日志</button>
+        </div>
+        <div class="panel active" id="panel-account">
+            <h3 style="margin-bottom: 16px;">登录得物账号</h3>
+            <div class="row">
+                <div class="form-group"><label>手机号</label><input type="text" id="phone" placeholder="请输入手机号" maxlength="11"></div>
+                <div class="form-group"><label>验证码</label><input type="text" id="captcha" placeholder="请输入验证码" maxlength="6"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" id="btnSendCaptcha" onclick="sendCaptcha()">发送验证码</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-success" onclick="login()">登录</button></div>
+            </div>
+            <div id="accountAlert"></div>
+            <div class="account-list" id="accountList"></div>
+            <h3 style="margin: 24px 0 16px;">AI 内容生成设置</h3>
+            <div class="row">
+                <div class="form-group" style="flex: 0 0 300px;">
+                    <label>AI提供商</label>
+                    <select id="aiProvider" onchange="onAiProviderChange()">
+                        <option value="template">智能模板（免费，无需配置）</option>
+                        <option value="doubao">豆包API（火山引擎）</option>
+                        <option value="openai">OpenAI兼容API</option>
+                        <option value="ollama">Ollama本地模型</option>
+                    </select>
+                </div>
+            </div>
+            <div id="aiApiConfig" style="display:none;">
+                <div class="row">
+                    <div class="form-group"><label>API Key</label><input type="password" id="aiApiKey" placeholder="sk-xxxxxxxx"></div>
+                    <div class="form-group"><label>模型名称</label><input type="text" id="aiModel" placeholder="doubao-pro-32k"></div>
+                    <div class="form-group"><label>API地址</label><input type="text" id="aiBaseUrl" placeholder="https://ark.cn-beijing.volces.com/api/v3"></div>
+                </div>
+            </div>
+            <div id="aiOllamaConfig" style="display:none;">
+                <div class="row">
+                    <div class="form-group" style="flex: 0 0 300px;"><label>本地模型名称</label><input type="text" id="aiOllamaModel" placeholder="qwen2.5:7b" value="qwen2.5:7b"></div>
+                    <div class="form-group" style="flex: 1;"><label style="visibility:hidden;">提示</label><div style="padding:10px 12px;background:#fff8e6;border-radius:6px;font-size:13px;color:#8a6d00;">需先安装Ollama并执行 <code>ollama pull qwen2.5:7b</code></div></div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 0 0 150px;"><label>温度</label><input type="number" id="aiTemperature" min="0" max="1" step="0.05" value="0.85"></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>最大生成长度</label><input type="number" id="aiMaxTokens" min="200" max="2000" step="100" value="800"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" onclick="saveAiConfig()">保存AI设置</button></div>
+            </div>
+            <div id="aiAlert"></div>
+            <h3 style="margin: 24px 0 16px;">得物搜索趋势词</h3>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>导入趋势词（逗号分隔）</label><textarea id="trendWordsInput" rows="3" placeholder="酒红色衬衫,秋日穿搭,氛围感穿搭"></textarea></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" onclick="importTrendWords()">导入</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-danger" onclick="clearTrendWords()">清空</button></div>
+            </div>
+            <div id="trendAlert"></div>
+            <div id="trendWordsList" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;"></div>
+        </div>
+        <div class="panel" id="panel-publish">
+            <div class="stats">
+                <div class="stat-card"><div class="num" id="statTotal">0</div><div class="label">总任务数</div></div>
+                <div class="stat-card"><div class="num" id="statSuccess">0</div><div class="label">发布成功</div></div>
+                <div class="stat-card"><div class="num" id="statFailed">0</div><div class="label">发布失败</div></div>
+                <div class="stat-card"><div class="num" id="statPending">0</div><div class="label">待发布</div></div>
+            </div>
+            <h3 style="margin-bottom: 16px;">发布设置</h3>
+            <div class="row">
+                <div class="form-group"><label>图片根目录</label><input type="text" id="imageDir" placeholder="C:\Users\xxx\Desktop\蓝V图"></div>
+                <div class="form-group" style="flex: 0 0 120px;"><label>每组图片数</label><input type="number" id="groupSize" min="0" max="9" value="0"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" onclick="scanImages()">扫描图片</button></div>
+            </div>
+            <div class="row">
+                <div class="form-group"><label>默认标题</label><input type="text" id="defaultTitle" placeholder="不填则使用文件夹名"></div>
+                <div class="form-group"><label>默认文案</label><input type="text" id="defaultContent" placeholder="不填则使用默认文案"></div>
+                <div class="form-group"><label>话题</label><input type="text" id="defaultTopics" placeholder="每行一个"></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>关联商品ID</label><input type="text" id="productId" placeholder="多个用逗号分隔"></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>发布间隔（分钟）</label><input type="number" id="intervalMinutes" min="0" value="0"></div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 0 0 200px; display: flex; align-items: flex-end;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="autoGenerateEach" checked style="width: 18px; height: 18px;"> <span style="font-size: 14px;">每组自动生成不同内容</span>
+                    </label>
+                </div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 0 0 150px;"><label>目标人群</label><select id="aiGender"><option value="auto">自动识别</option><option value="male">男装</option><option value="female">女装</option></select></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>品类</label><select id="aiCategory"><option value="auto">自动识别</option><option>衬衫</option><option>T恤</option><option>卫衣</option><option>裤子</option></select></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" id="btnAiGenerate" onclick="aiGenerate()">✨ AI智能生成</button></div>
+            </div>
+            <div class="row" style="margin-top: 16px;">
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-success" id="btnStartPublish" onclick="startPublish()">开始发布</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-warning" id="btnStopPublish" onclick="stopPublish()" disabled>停止发布</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-danger" onclick="clearTasks()">清空任务</button></div>
+            </div>
+            <div id="publishAlert"></div>
+            <table class="task-table">
+                <thead><tr><th>序号</th><th>文件夹/标题</th><th>图片数</th><th>状态</th><th>发布链接</th></tr></thead>
+                <tbody id="taskBody"></tbody>
+            </table>
+            <div class="queue-box">
+                <h3 style="margin:0 0 8px 0;font-size:16px;">📦 多任务队列</h3>
+                <p style="font-size:12px;color:#666;margin:0 0 12px 0;">自动衔接发布，无需人工值守</p>
+                <div class="queue-grid">
+                    <input type="text" id="taskImageDir" placeholder="图片文件夹路径">
+                    <input type="text" id="taskProductId" placeholder="商品ID">
+                    <input type="number" id="taskImagesPerGroup" value="5" min="1">
+                    <input type="number" id="taskInterval" value="5" min="0" step="0.5">
+                    <button onclick="addTask()" style="padding:8px 16px;background:#007bff;color:#fff;border:none;border-radius:4px;cursor:pointer;">添加任务</button>
+                </div>
+                <div style="margin-bottom:10px;">
+                    <button onclick="startAllTasks()" style="padding:8px 16px;background:#28a745;color:#fff;border:none;border-radius:4px;cursor:pointer;margin-right:8px;">🚀 开始全部发布</button>
+                    <button onclick="clearTaskQueue()" style="padding:8px 16px;background:#dc3545;color:#fff;border:none;border-radius:4px;cursor:pointer;">清空队列</button>
+                    <span id="taskQueueStatus" style="margin-left:10px;font-size:13px;"></span>
+                </div>
+                <div id="taskQueueList" style="max-height:300px;overflow-y:auto;"></div>
+            </div>
+        </div>
+        <div class="panel" id="panel-video">
+            <div class="stats">
+                <div class="stat-card"><div class="num" id="videoStatTotal">0</div><div class="label">总视频数</div></div>
+                <div class="stat-card"><div class="num" id="videoStatSuccess">0</div><div class="label">发布成功</div></div>
+                <div class="stat-card"><div class="num" id="videoStatFailed">0</div><div class="label">发布失败</div></div>
+                <div class="stat-card"><div class="num" id="videoStatPending">0</div><div class="label">待发布</div></div>
+            </div>
+            <h3 style="margin-bottom: 16px;">视频发布设置</h3>
+            <div class="row">
+                <div class="form-group"><label>视频根目录</label><input type="text" id="videoDir" placeholder="C:\Users\xxx\Desktop\蓝V视频"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" onclick="scanVideos()">扫描视频</button></div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>视频封面图（可选）</label><input type="text" id="videoCoverImage" placeholder="本地图片路径，如 C:\cover.jpg；不填则自动匹配同命名图片或提取首帧"></div>
+                <div class="form-group" style="flex: 0 0 200px;"><label>关联好物商品ID</label><input type="text" id="videoProductId" placeholder="多个用逗号分隔"></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>发布间隔（分钟）</label><input type="number" id="videoIntervalMinutes" min="0" value="0"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-success" id="btnStartVideoPublish" onclick="startVideoPublish()">开始发布</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-warning" id="btnStopVideoPublish" onclick="stopVideoPublish()" disabled>停止发布</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-danger" onclick="clearVideoTasks()">清空任务</button></div>
+            </div>
+            <div id="videoPublishAlert"></div>
+            <table class="task-table">
+                <thead><tr><th>序号</th><th>文件夹/标题</th><th>视频数</th><th>状态</th><th>发布链接</th></tr></thead>
+                <tbody id="videoTaskBody"></tbody>
+            </table>
+        </div>
+        <div class="panel" id="panel-material">
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>外网内容抓取API地址</label><input type="text" id="fetchApiUrl" placeholder="http://your-api.com/fetch"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" onclick="saveFetchApiUrl()">保存API</button></div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>外网笔记链接</label><input type="text" id="fetchUrl" placeholder="粘贴链接"></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" onclick="fetchMaterial()">抓取内容</button></div>
+            </div>
+            <div id="fetchTip" style="margin-bottom: 12px;font-size: 13px;"></div>
+            <h3 style="margin-bottom: 12px;">内容编辑</h3>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>标题</label><input type="text" id="materialTitle"></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>媒体类型</label><select id="materialMediaType"><option value="image">图文</option><option value="video">视频</option></select></div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>正文</label><textarea id="materialContent" rows="4"></textarea></div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>话题（逗号分隔）</label><input type="text" id="materialTopics"></div>
+                <div class="form-group" style="flex: 0 0 200px;"><label>关联商品ID</label><input type="text" id="materialGoodsId"></div>
+            </div>
+            <div class="row">
+                <div class="form-group" style="flex: 1;"><label>媒体文件URL（每行一个）</label><textarea id="materialMediaUrls" rows="3"></textarea></div>
+            </div>
+            <div class="row" style="margin-bottom: 16px;">
+                <button class="btn btn-primary" onclick="saveMaterial()">保存到素材库</button>
+                <button class="btn btn-success" onclick="publishMaterial()">一键发布</button>
+                <button class="btn btn-warning" onclick="clearMaterialForm()">清空表单</button>
+                <input type="hidden" id="editingMaterialId" value="">
+            </div>
+            <h3 style="margin-bottom: 12px;">📦 素材库</h3>
+            <div id="materialList"></div>
+        </div>
+        <div class="panel" id="panel-log">
+            <h3 style="margin-bottom: 16px;">操作日志</h3>
+            <div class="log-box" id="logBox"></div>
+        </div>
+    </div>
+    <script>
+        let currentTab = 'account';
+        let publishStopFlag = false;
+        let taskQueuePolling = null;
+        let currentMaterials = [];
+        
+        async function api(url, method = 'GET', body = null) {
+            const options = { method: method, headers: { 'Content-Type': 'application/json' } };
+            if (body) options.body = JSON.stringify(body);
+            const resp = await fetch(url, options);
+            return await resp.json();
+        }
+        
+        function switchTab(tab, btn = null) {
+            currentTab = tab;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            if (btn) {
+                btn.classList.add('active');
+            } else {
+                const btnEl = document.querySelector(`.tab[data-tab="${tab}"]`);
+                if (btnEl) btnEl.classList.add('active');
+            }
+            document.getElementById('panel-' + tab).classList.add('active');
+            if (tab === 'log') refreshLog();
+            if (tab === 'material') loadMaterials();
+        }
+        
+        function showAlert(id, message, type) {
+            const el = document.getElementById(id);
+            el.innerHTML = '<div class="alert alert-' + type + '">' + message + '</div>';
+            setTimeout(() => { el.innerHTML = ''; }, 5000);
+        }
+        
+        async function sendCaptcha() {
+            const phone = document.getElementById('phone').value.trim();
+            if (!phone || phone.length !== 11) return showAlert('accountAlert', '请输入正确的11位手机号', 'error');
+            const btn = document.getElementById('btnSendCaptcha');
+            btn.disabled = true; btn.textContent = '发送中...';
+            try {
+                const data = await api('/api/send_captcha', 'POST', { phone });
+                if (data.success) {
+                    showAlert('accountAlert', '验证码发送成功：' + data.message, 'success');
+                    let count = 60;
+                    const timer = setInterval(() => { btn.textContent = count + '秒后重发'; count--; if (count < 0) { clearInterval(timer); btn.disabled = false; btn.textContent = '发送验证码'; } }, 1000);
+                } else if (data.need_captcha && data.session_id) {
+                    // 485风控：弹出滑块挑战，验证通过后自动重发
+                    btn.disabled = false; btn.textContent = '发送验证码';
+                    showAlert('accountAlert', '触发风控滑块验证，请完成滑块', 'info');
+                    openSliderChallenge(data.session_id);
+                } else { showAlert('accountAlert', '发送失败：' + data.message, 'error'); btn.disabled = false; btn.textContent = '发送验证码'; }
+            } catch (e) { showAlert('accountAlert', '请求失败：' + e.message, 'error'); btn.disabled = false; btn.textContent = '发送验证码'; }
+        }
+
+        // ==================== 滑块验证（485风控挑战） ====================
+        let sliderSessionId = '';
+        let sliderTrack = [];  // 采集的拖动轨迹 [{x,y,t}]
+
+        async function openSliderChallenge(sessionId) {
+            sliderSessionId = sessionId;
+            sliderTrack = [];
+            document.getElementById('sliderStatus').textContent = '拉取挑战图中...';
+            document.getElementById('sliderRetryBtn').style.display = 'none';
+            document.getElementById('sliderMask').classList.add('show');
+            try {
+                const data = await api('/api/captcha/challenge', 'POST', { session_id: sessionId });
+                if (data.success) {
+                    sliderSessionId = data.session_id || sessionId;
+                    const bg = document.getElementById('sliderBg');
+                    const piece = document.getElementById('sliderPiece');
+                    if (data.bg_image) { bg.src = data.bg_image; piece.style.display = 'none'; }
+                    else if (data.bg_list && data.bg_list.length > 0) { bg.src = data.bg_list[data.bg_list.length - 1]; piece.style.display = 'none'; }
+                    document.getElementById('sliderStatus').textContent = '';
+                    resetSlider();
+                } else {
+                    document.getElementById('sliderStatus').textContent = '拉取失败：' + data.message;
+                    document.getElementById('sliderRetryBtn').style.display = '';
+                }
+            } catch (e) {
+                document.getElementById('sliderStatus').textContent = '拉取失败：' + e.message;
+                document.getElementById('sliderRetryBtn').style.display = '';
+            }
+        }
+
+        function closeSlider() { document.getElementById('sliderMask').classList.remove('show'); }
+
+        function resetSlider() {
+            sliderTrack = [];
+            document.getElementById('sliderKnob').style.left = '0px';
+            document.getElementById('sliderFill').style.width = '0px';
+            document.getElementById('sliderTip').textContent = '按住滑块拖动到最右侧';
+            document.getElementById('sliderStatus').textContent = '';
+        }
+
+        function initSliderDrag() {
+            const knob = document.getElementById('sliderKnob');
+            const track = document.getElementById('sliderTrack');
+            const fill = document.getElementById('sliderFill');
+            const maxLeft = track.clientWidth - knob.clientWidth;
+            let startX = 0, dragging = false;
+
+            function onMove(e) {
+                if (!dragging) return;
+                const cx = (e.touches ? e.touches[0].clientX : e.clientX);
+                let left = Math.min(Math.max(cx - startX, 0), maxLeft);
+                knob.style.left = left + 'px';
+                fill.style.width = (left + knob.clientWidth / 2) + 'px';
+                sliderTrack.push({ x: Math.round(left), y: e.clientY || 0, t: Date.now() });
+            }
+            async function onUp() {
+                if (!dragging) return;
+                dragging = false;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onUp);
+                if (sliderTrack.length < 3) { resetSlider(); return; }
+                // 轨迹已采集，提交verify（d串加密构造完成后此处即可通过）
+                const st = document.getElementById('sliderStatus');
+                st.textContent = '正在提交验证（轨迹' + sliderTrack.length + '点）...';
+                try {
+                    const data = await api('/api/captcha/verify', 'POST', {
+                        session_id: sliderSessionId,
+                        track: sliderTrack,
+                    });
+                    if (data.success) {
+                        st.textContent = '验证成功！正在重发验证码...';
+                        setTimeout(async () => { closeSlider(); await sendCaptcha(); }, 600);
+                    } else {
+                        st.textContent = '验证未通过：' + (data.message || '请重试');
+                        document.getElementById('sliderRetryBtn').style.display = '';
+                        setTimeout(resetSlider, 400);
+                    }
+                } catch (e) {
+                    st.textContent = '提交失败：' + e.message;
+                    document.getElementById('sliderRetryBtn').style.display = '';
+                }
+            }
+            knob.addEventListener('mousedown', e => { dragging = true; startX = e.clientX - (parseFloat(knob.style.left) || 0); sliderTrack.push({ x: 0, y: e.clientY, t: Date.now() }); document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp); });
+            knob.addEventListener('touchstart', e => { dragging = true; startX = e.touches[0].clientX - (parseFloat(knob.style.left) || 0); sliderTrack.push({ x: 0, y: e.touches[0].clientY, t: Date.now() }); document.addEventListener('touchmove', onMove, { passive: false }); document.addEventListener('touchend', onUp); }, { passive: false });
+        }
+        document.addEventListener('DOMContentLoaded', initSliderDrag);
+        
+        async function login() {
+            const phone = document.getElementById('phone').value.trim();
+            const captcha = document.getElementById('captcha').value.trim();
+            if (!phone || !captcha) return showAlert('accountAlert', '请输入手机号和验证码', 'error');
+            try {
+                const data = await api('/api/login', 'POST', { phone, captcha });
+                if (data.success) { showAlert('accountAlert', '登录成功！', 'success'); document.getElementById('captcha').value = ''; refreshAccounts(); }
+                else showAlert('accountAlert', '登录失败：' + data.message, 'error');
+            } catch (e) { showAlert('accountAlert', '请求失败：' + e.message, 'error'); }
+        }
+        
+        async function refreshAccounts() {
+            const data = await api('/api/accounts');
+            const list = document.getElementById('accountList');
+            if (data.accounts.length === 0) { list.innerHTML = '<p style="color:#888;text-align:center;padding:20px;">暂无登录账号</p>'; document.getElementById('headerStatus').textContent = '未登录'; return; }
+            list.innerHTML = data.accounts.map(a => `
+                <div class="account-item ${a.current ? 'current' : ''}">
+                    <div class="info"><div class="phone">${a.phone}</div><div class="user">${a.user_name || '未知用户'} | userId: ${a.user_id || '-'}</div></div>
+                    <div>${!a.current ? '<button class="btn btn-primary" onclick="useAccount(\'' + a.phone + '\')">使用</button>' : '<span style="color:#27ae60;font-weight:600;">当前使用</span>'} <button class="btn btn-danger" onclick="removeAccount(\'' + a.phone + '\')" style="margin-left:8px;">删除</button></div>
+                </div>`).join('');
+            const current = data.accounts.find(a => a.current);
+            document.getElementById('headerStatus').textContent = current ? '已登录：' + current.phone : '未登录';
+        }
+        
+        async function useAccount(phone) { document.getElementById('phone').value = phone; showAlert('accountAlert', '已填充手机号 ' + phone + '，请点击"发送验证码"', 'info'); }
+        async function removeAccount(phone) { if (!confirm('确定删除该账号？')) return; await api('/api/remove_account', 'POST', { phone }); refreshAccounts(); }
+        
+        function onAiProviderChange() {
+            const provider = document.getElementById('aiProvider').value;
+            document.getElementById('aiApiConfig').style.display = (provider === 'doubao' || provider === 'openai') ? 'block' : 'none';
+            document.getElementById('aiOllamaConfig').style.display = (provider === 'ollama') ? 'block' : 'none';
+        }
+        
+        async function loadAiConfig() {
+            const data = await api('/api/ai_config');
+            document.getElementById('aiProvider').value = data.provider || 'template';
+            document.getElementById('aiModel').value = data.model || 'doubao-pro-32k';
+            document.getElementById('aiBaseUrl').value = data.base_url || 'https://ark.cn-beijing.volces.com/api/v3';
+            document.getElementById('aiTemperature').value = data.temperature || 0.85;
+            document.getElementById('aiMaxTokens').value = data.max_tokens || 800;
+            if (data.provider === 'ollama') document.getElementById('aiOllamaModel').value = data.model || 'qwen2.5:7b';
+            onAiProviderChange();
+        }
+        
+        async function saveAiConfig() {
+            const provider = document.getElementById('aiProvider').value;
+            let model = document.getElementById('aiModel').value;
+            const body = { provider, api_key: document.getElementById('aiApiKey').value, model, base_url: document.getElementById('aiBaseUrl').value, temperature: document.getElementById('aiTemperature').value, max_tokens: document.getElementById('aiMaxTokens').value };
+            if (provider === 'ollama') model = document.getElementById('aiOllamaModel').value || 'qwen2.5:7b';
+            const data = await api('/api/ai_config', 'POST', body);
+            if (data.success) showAlert('aiAlert', 'AI设置已保存', 'success'); else showAlert('aiAlert', '保存失败: ' + data.message, 'error');
+        }
+        
+        async function loadTrendWords() {
+            const data = await api('/api/trend_words');
+            document.getElementById('trendWordsList').innerHTML = data.words.map(w => `<span style="padding:4px 12px;background:#e8f0fe;color:#1a56db;border-radius:20px;font-size:13px;">#${w}</span>`).join('');
+        }
+        
+        async function importTrendWords() {
+            const words = document.getElementById('trendWordsInput').value;
+            if (!words.trim()) return showAlert('trendAlert', '请输入趋势词', 'error');
+            const data = await api('/api/trend_words', 'POST', { action: 'set', words });
+            if (data.success) { showAlert('trendAlert', `当前共 ${data.count} 个趋势词`, 'success'); document.getElementById('trendWordsInput').value = ''; loadTrendWords(); }
+        }
+        
+        async function clearTrendWords() { if (!confirm('确定清空所有趋势词？')) return; await api('/api/trend_words', 'POST', { action: 'clear' }); loadTrendWords(); }
+        
+        async function scanImages() {
+            const dir = document.getElementById('imageDir').value.trim();
+            const groupSize = parseInt(document.getElementById('groupSize').value) || 0;
+            if (!dir) return showAlert('publishAlert', '请输入图片根目录', 'error');
+            const data = await api('/api/scan_images', 'POST', { dir, group_size: groupSize });
+            if (data.success) showAlert('publishAlert', groupSize > 0 ? `扫描完成，共分为 ${data.count} 组` : `扫描完成，共找到 ${data.count} 个图片文件夹`, 'success'); else showAlert('publishAlert', '扫描失败：' + data.message, 'error');
+            refreshTasks();
+        }
+        
+        async function refreshTasks() {
+            const data = await api('/api/tasks');
+            const tbody = document.getElementById('taskBody');
+            tbody.innerHTML = data.tasks.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#888;padding:30px;">暂无任务</td></tr>' : data.tasks.map((t, i) => `<tr><td>${i + 1}</td><td>${t.title}</td><td>${t.image_count}</td><td><span class="status-badge status-${t.status}">${t.status_text}</span></td><td>${t.article_url ? '<a href="' + t.article_url + '" target="_blank">查看</a>' : '-'}</td></tr>`).join('');
+            document.getElementById('statTotal').textContent = data.stats.total;
+            document.getElementById('statSuccess').textContent = data.stats.success;
+            document.getElementById('statFailed').textContent = data.stats.failed;
+            document.getElementById('statPending').textContent = data.stats.pending;
+        }
+        
+        async function startPublish() {
+            const title = document.getElementById('defaultTitle').value;
+            const content = document.getElementById('defaultContent').value;
+            const topics = document.getElementById('defaultTopics').value;
+            publishStopFlag = false;
+            document.getElementById('btnStartPublish').disabled = true;
+            document.getElementById('btnStopPublish').disabled = false;
+            try {
+                const data = await api('/api/start_publish', 'POST', { title, content, topics, product_id: document.getElementById('productId').value, interval_minutes: parseFloat(document.getElementById('intervalMinutes').value) || 0, auto_generate_each: document.getElementById('autoGenerateEach').checked });
+                if (data.success) showAlert('publishAlert', '发布任务已启动', 'success'); else showAlert('publishAlert', '启动失败：' + data.message, 'error');
+            } catch (e) { showAlert('publishAlert', '请求失败：' + e.message, 'error'); }
+            document.getElementById('btnStartPublish').disabled = false;
+            document.getElementById('btnStopPublish').disabled = true;
+            refreshTasks();
+        }
+        
+        async function stopPublish() { publishStopFlag = true; await api('/api/stop_publish', 'POST'); showAlert('publishAlert', '已请求停止', 'info'); }
+        async function clearTasks() { if (!confirm('确定清空所有任务？')) return; await api('/api/clear_tasks', 'POST'); refreshTasks(); }
+        
+        async function addTask() {
+            const imageDir = document.getElementById('taskImageDir').value.trim();
+            const productId = document.getElementById('taskProductId').value.trim();
+            const imagesPerGroup = parseInt(document.getElementById('taskImagesPerGroup').value) || 5;
+            const intervalMinutes = parseFloat(document.getElementById('taskInterval').value) || 5;
+            if (!imageDir) return alert('请填写图片文件夹路径');
+            const data = await api('/api/add_task', 'POST', { image_dir: imageDir, product_id: productId, images_per_group: imagesPerGroup, interval_minutes: intervalMinutes });
+            if (data.success) { document.getElementById('taskImageDir').value = ''; document.getElementById('taskProductId').value = ''; refreshTaskQueue(); } else alert('添加失败：' + data.message);
+        }
+        
+        async function removeTask(taskId) { if (!confirm('确定删除这个任务吗？')) return; await api('/api/remove_task', 'POST', { task_id: taskId }); refreshTaskQueue(); }
+        async function clearTaskQueue() { if (!confirm('确定清空所有任务吗？')) return; await api('/api/clear_task_queue', 'POST'); refreshTaskQueue(); }
+        async function startAllTasks() { const data = await api('/api/start_all_tasks', 'POST'); if (data.success) startTaskQueuePolling(); else alert('启动失败：' + data.message); }
+        
+        async function refreshTaskQueue() {
+            const data = await api('/api/task_queue');
+            const tasks = data.tasks || [];
+            const listEl = document.getElementById('taskQueueList');
+            if (tasks.length === 0) { listEl.innerHTML = '<div style="color:#999;text-align:center;padding:20px;">暂无任务</div>'; return; }
+            listEl.innerHTML = tasks.map(task => {
+                let statusColor = '#666', statusText = '待发布';
+                if (task.status === 'running') { statusColor = '#007bff'; statusText = '发布中'; }
+                else if (task.status === 'completed') { statusColor = '#28a745'; statusText = '已完成'; }
+                else if (task.status === 'failed') { statusColor = '#dc3545'; statusText = '失败'; }
+                return `<div style="border:1px solid #eee;border-radius:6px;padding:10px;margin-bottom:8px;background:${task.status === 'running' ? '#e7f3ff' : '#fff'}"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;"><span style="font-weight:bold;">任务 ${task.id}</span><span style="color:${statusColor};font-size:13px;">● ${statusText} (${task.progress})</span></div><div style="font-size:12px;color:#666;margin-bottom:5px;">📁 ${task.image_dir}<br>🛒 商品ID: ${task.product_id || '无'} | 每组${task.images_per_group}张 | 间隔${task.interval_minutes}分钟</div><div style="font-size:12px;color:#28a745;">✅ ${task.result || ''}</div></div>`;
+            }).join('');
+        }
+        
+        function startTaskQueuePolling() {
+            if (taskQueuePolling) clearInterval(taskQueuePolling);
+            taskQueuePolling = setInterval(() => { refreshTaskQueue(); fetch('/api/task_queue').then(r => r.json()).then(data => { const running = data.tasks.some(t => t.status === 'running'); const pending = data.tasks.some(t => t.status === 'pending'); if (running) document.getElementById('taskQueueStatus').innerHTML = '<span style="color:#007bff;">🔄 运行中...</span>'; else if (!pending) { document.getElementById('taskQueueStatus').innerHTML = '<span style="color:#28a745;">✅ 已完成</span>'; clearInterval(taskQueuePolling); taskQueuePolling = null; } }); }, 3000);
+        }
+        
+        async function aiGenerate() {
+            const taskRows = document.querySelectorAll('#taskBody tr');
+            if (taskRows.length === 0) return showAlert('publishAlert', '请先扫描图片', 'error');
+            const folderName = taskRows[0].querySelector('td:nth-child(2)').textContent.trim();
+            const btn = document.getElementById('btnAiGenerate'); btn.disabled = true; btn.textContent = '生成中...';
+            const data = await api('/api/ai_generate', 'POST', { folder_name: folderName, gender: document.getElementById('aiGender').value, category: document.getElementById('aiCategory').value });
+            if (data.success) { document.getElementById('defaultTitle').value = data.data.title || ''; document.getElementById('defaultContent').value = data.data.content || ''; document.getElementById('defaultTopics').value = data.data.topics || ''; showAlert('publishAlert', '内容已生成，可修改后发布', 'success'); } else showAlert('publishAlert', '生成失败: ' + data.message, 'error');
+            btn.disabled = false; btn.textContent = '✨ AI智能生成';
+        }
+        
+        async function scanVideos() {
+            const dir = document.getElementById('videoDir').value.trim();
+            if (!dir) return showAlert('videoPublishAlert', '请输入视频根目录', 'error');
+            const data = await api('/api/scan_videos', 'POST', { dir });
+            if (data.success) showAlert('videoPublishAlert', '扫描完成，共找到 ' + data.count + ' 个视频任务', 'success'); else showAlert('videoPublishAlert', '扫描失败：' + data.message, 'error');
+            refreshVideoTasks();
+        }
+        
+        async function refreshVideoTasks() {
+            const data = await api('/api/video_tasks');
+            const tbody = document.getElementById('videoTaskBody');
+            tbody.innerHTML = data.tasks.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#888;padding:30px;">暂无视频任务</td></tr>' : data.tasks.map((t, i) => `<tr><td>${i + 1}</td><td>${t.title}</td><td>${t.video_count}</td><td><span class="status-badge status-${t.status}">${t.status_text}</span></td><td>${t.article_url ? '<a href="' + t.article_url + '" target="_blank">查看</a>' : '-'}</td></tr>`).join('');
+            document.getElementById('videoStatTotal').textContent = data.stats.total;
+            document.getElementById('videoStatSuccess').textContent = data.stats.success;
+            document.getElementById('videoStatFailed').textContent = data.stats.failed;
+            document.getElementById('videoStatPending').textContent = data.stats.pending;
+        }
+        
+        async function startVideoPublish() {
+            const data = await api('/api/start_video_publish', 'POST', { product_id: document.getElementById('videoProductId').value, interval_minutes: parseFloat(document.getElementById('videoIntervalMinutes').value) || 0, cover_image: document.getElementById('videoCoverImage').value.trim() });
+            if (data.success) { showAlert('videoPublishAlert', '视频发布任务已启动', 'success'); document.getElementById('btnStartVideoPublish').disabled = true; document.getElementById('btnStopVideoPublish').disabled = false; } else showAlert('videoPublishAlert', '启动失败：' + data.message, 'error');
+        }
+        
+        async function stopVideoPublish() { await api('/api/stop_video_publish', 'POST'); document.getElementById('btnStartVideoPublish').disabled = false; document.getElementById('btnStopVideoPublish').disabled = true; showAlert('videoPublishAlert', '已请求停止', 'info'); }
+        async function clearVideoTasks() { if (!confirm('确定清空所有视频任务？')) return; await api('/api/clear_video_tasks', 'POST'); refreshVideoTasks(); }
+        
+        async function loadMaterials() {
+            const data = await api('/api/materials');
+            currentMaterials = data.materials || [];
+            document.getElementById('fetchApiUrl').value = data.fetch_api_url || '';
+            renderMaterialList();
+        }
+        
+        function renderMaterialList() {
+            const container = document.getElementById('materialList');
+            if (currentMaterials.length === 0) { container.innerHTML = '<div style="text-align:center;color:#888;padding:30px;">暂无素材</div>'; return; }
+            container.innerHTML = currentMaterials.map(m => `<div style="border:1px solid #ddd;padding:10px;margin:8px 0;border-radius:6px;"><div style="font-weight:bold;margin-bottom:4px;">${m.title || '(无标题)'}</div><div style="font-size:12px;color:#666;margin-bottom:4px;">${(m.content || '').slice(0, 50)}...</div><div style="font-size:12px;color:#888;margin-bottom:6px;">类型: ${m.media_type === 'video' ? '视频' : '图文'} | 媒体: ${(m.media_urls || []).length}个 | 商品: ${m.goods_id || '无'}</div><div><button class="btn btn-primary" style="padding:2px 8px;font-size:12px;" onclick="loadMaterialToForm('${m.id}')">编辑</button><button class="btn btn-success" style="padding:2px 8px;font-size:12px;" onclick="publishMaterialById('${m.id}')">发布</button><button class="btn btn-danger" style="padding:2px 8px;font-size:12px;" onclick="deleteMaterial('${m.id}')">删除</button></div></div>`).join('');
+        }
+        
+        async function saveFetchApiUrl() { await api('/api/materials/fetch_api_url', 'POST', { api_url: document.getElementById('fetchApiUrl').value.trim() }); alert('抓取API地址已保存'); }
+        
+        async function fetchMaterial() {
+            const url = document.getElementById('fetchUrl').value.trim();
+            const apiUrl = document.getElementById('fetchApiUrl').value.trim();
+            const tip = document.getElementById('fetchTip');
+            if (!url) { tip.innerHTML = '<span style="color:red;">请输入链接</span>'; return; }
+            if (!apiUrl) { tip.innerHTML = '<span style="color:red;">请先配置API</span>'; return; }
+            tip.innerHTML = '<span style="color:blue;">正在抓取...</span>';
+            const data = await api('/api/materials/fetch', 'POST', { url, api_url: apiUrl });
+            if (data.success) { const m = data.material; document.getElementById('materialTitle').value = m.title || ''; document.getElementById('materialContent').value = m.content || ''; document.getElementById('materialTopics').value = m.topics || ''; document.getElementById('materialMediaType').value = m.media_type || 'image'; document.getElementById('materialMediaUrls').value = (m.media_urls || []).join('\n'); tip.innerHTML = '<span style="color:green;">抓取成功！请检查后保存</span>'; } else tip.innerHTML = '<span style="color:red;">抓取失败: ' + data.message + '</span>';
+        }
+        
+        function getMaterialForm() { return { id: document.getElementById('editingMaterialId').value, title: document.getElementById('materialTitle').value.trim(), content: document.getElementById('materialContent').value.trim(), topics: document.getElementById('materialTopics').value.trim(), goods_id: document.getElementById('materialGoodsId').value.trim(), media_type: document.getElementById('materialMediaType').value, media_urls: document.getElementById('materialMediaUrls').value.split('\n').map(s => s.trim()).filter(s => s) }; }
+        
+        async function saveMaterial() { const data = getMaterialForm(); if (!data.title && !data.content) return alert('标题和正文不能都为空'); const result = await api('/api/materials/save', 'POST', data); if (result.success) { alert('素材已保存'); clearMaterialForm(); loadMaterials(); } }
+        
+        function loadMaterialToForm(id) { const m = currentMaterials.find(x => x.id === id); if (!m) return; document.getElementById('editingMaterialId').value = m.id; document.getElementById('materialTitle').value = m.title || ''; document.getElementById('materialContent').value = m.content || ''; document.getElementById('materialTopics').value = m.topics || ''; document.getElementById('materialGoodsId').value = m.goods_id || ''; document.getElementById('materialMediaType').value = m.media_type || 'image'; document.getElementById('materialMediaUrls').value = (m.media_urls || []).join('\n'); window.scrollTo(0, 0); }
+        
+        async function deleteMaterial(id) { if (!confirm('确定删除这个素材？')) return; await api('/api/materials/delete', 'POST', { id }); loadMaterials(); }
+        
+        async function publishMaterial() { const data = getMaterialForm(); if (!data.title) return alert('请填写标题'); if (data.media_urls.length === 0) return alert('请填写媒体文件URL'); const saveResult = await api('/api/materials/save', 'POST', data); if (saveResult.success) publishMaterialById(saveResult.material.id); }
+        
+        async function publishMaterialById(id) { if (!confirm('确定发布这个素材？')) return; const data = await api('/api/materials/publish', 'POST', { id }); if (data.success) { alert('发布任务已启动'); switchTab('log'); } else alert('发布失败: ' + data.message); }
+        
+        function clearMaterialForm() { document.getElementById('editingMaterialId').value = ''; document.getElementById('materialTitle').value = ''; document.getElementById('materialContent').value = ''; document.getElementById('materialTopics').value = ''; document.getElementById('materialGoodsId').value = ''; document.getElementById('materialMediaType').value = 'image'; document.getElementById('materialMediaUrls').value = ''; document.getElementById('fetchUrl').value = ''; document.getElementById('fetchTip').innerHTML = ''; }
+        
+        async function refreshLog() {
+            const data = await api('/api/logs');
+            document.getElementById('logBox').innerHTML = data.logs.map(l => '<div>' + l + '</div>').join('');
+            document.getElementById('logBox').scrollTop = document.getElementById('logBox').scrollHeight;
+        }
+        
+        setInterval(() => {
+            if (currentTab === 'publish') refreshTasks();
+            if (currentTab === 'video') refreshVideoTasks();
+            if (currentTab === 'log') refreshLog();
+        }, 3000);
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            refreshAccounts();
+            refreshTasks();
+            loadAiConfig();
+            loadTrendWords();
+            refreshTaskQueue();
+            onAiProviderChange();
+        });
+    </script>
+
+    <!-- 滑块验证模态框（485风控挑战） -->
+    <div class="slider-mask" id="sliderMask">
+        <div class="slider-modal">
+            <h4>安全验证</h4>
+            <div class="sub">检测到风险验证，请完成滑块后系统将自动重发验证码</div>
+            <div class="slider-canvas">
+                <img class="bg" id="sliderBg" alt="挑战图">
+                <img class="piece" id="sliderPiece" alt="">
+            </div>
+            <div class="slider-track" id="sliderTrack">
+                <div class="slider-fill" id="sliderFill"></div>
+                <div class="tip" id="sliderTip">按住滑块拖动到最右侧</div>
+                <div class="slider-knob" id="sliderKnob">»</div>
+            </div>
+            <div class="slider-status" id="sliderStatus"></div>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+                <button class="btn btn-primary" id="sliderRetryBtn" style="display:none;" onclick="openSliderChallenge(sliderSessionId)">重新拉取</button>
+                <button class="btn" onclick="closeSlider()">关闭</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

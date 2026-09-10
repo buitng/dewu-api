@@ -1,0 +1,14 @@
+# 大文件/二进制/抓包数据不进 git
+*.so
+*.bin
+*.jsonl
+*.jpg
+*.png
+*.apk
+*.zip
+_emu_so/
+_duapp_x/
+_dl_tmp/
+__pycache__/
+*.pyc
+.flaskenv
