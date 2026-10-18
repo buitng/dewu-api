@@ -10,11 +10,19 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from dewu_api import (send_dewu_captcha, login_dewu_with_captcha,
-                      risk_stone_call, risk_stone_verify, randomize_device)
+                      risk_stone_call, risk_stone_verify, _plain_fail_msg)
 from modules.cunchu import state
 from modules.rizhi import log
 
 bp = Blueprint('zhanghu', __name__)
+
+# 测试手机号：发码/登录仅用于链路验证，日志标注【测试】，不影响真实账号数据
+TEST_PHONES = {'13800138000'}
+
+# 发码会话 token 缓存（phone -> init token）：验证码会话按 token+手机号匹配，
+# 登录时复用同一 token（真机抓包同 token 贯穿 init→sendCaptcha→unionLogin；
+# _test_full_chain60 假号全链路实证）。仅存内存，重启自动清空（登录态不跨重启）。
+_pending_login_tokens = {}
 
 
 @bp.route('/api/send_captcha', methods=['POST'])
@@ -24,13 +32,15 @@ def api_send_captcha():
     if not phone:
         return jsonify({'success': False, 'message': '手机号不能为空'})
     try:
-        # 每次发码前更换整套设备身份（实证：换shumeiid即可绕过485滑块，整套随机更稳）
-        dev = randomize_device()
-        log(f"已更换设备: {dev['brand']} {dev['trait']} (Android {dev['android']}) shumeiid={dev['shumeiid']}")
-        # 新设备不复用旧init token（旧token属于上一个设备会话，复用会上下文不一致）
+        # 设备已静态化为 MIX 2S 真机指纹（发码走白盒 data= 重放，无需随机换设备绕风控）
+        tag = '【测试】' if phone in TEST_PHONES else ''
         result = send_dewu_captcha(phone)
-        # 无论成功或485，都记录token：485重试需复用同一token上下文
-        state.pending_captcha_tokens[phone] = result.token
+        # 发码成功即缓存该会话 token，登录时复用（会话统一，见 _pending_login_tokens 注释）
+        if result.success and result.token:
+            _pending_login_tokens[phone] = result.token
+        # 发码结果落日志（此前为盲区：无法确认短信是否真的发出）
+        log(f"{tag}发码结果[{phone}]: success={result.success} msg={result.message}"
+            + (" [滑块挑战]" if result.challenge else ""))
         resp = {
             'success': result.success,
             'message': result.message,
@@ -116,18 +126,37 @@ def api_login():
     if not phone or not captcha:
         return jsonify({'success': False, 'message': '手机号和验证码不能为空'})
     try:
-        # 复用发送验证码时的init token（登录接口要求与发码保持同一设备token上下文）
-        init_token = state.pending_captcha_tokens.pop(phone, None)
-        result = login_dewu_with_captcha(phone, captcha, init_token=init_token)
+        # ★会话统一：复用发码时的 init token（验证码会话按 token+手机号匹配，
+        # 真机抓包同 token 贯穿 init→sendCaptcha→unionLogin；
+        # 发码 token 本就是 6.0 init 签发，与 unionLogin 6.0 门禁同源，无混搭风险）
+        # 挑战/失败不丢会话（get 而非 pop）：同码可重试同一验证码会话，成功后才清除。
+        # http_log 实证：此前 pop 后重试登录会自 init 新取 token 开新会话，旧码对不上
+        pending_token = _pending_login_tokens.get(phone)
+        log(f'登录请求[{phone}]: 验证码长度={len(captcha)} '
+            f'复用发码会话token={"是" if pending_token else "否(自init新取)"}')
+        result = login_dewu_with_captcha(phone, captcha, init_token=pending_token)
+        # 485 风控滑块挑战：返回 need_captcha 供前端走已有滑块 UI（与发码挑战同形态）
+        if result.challenge:
+            ch = result.challenge
+            return jsonify({
+                'success': False,
+                'need_captcha': True,
+                'session_id': ch.get('sessionId', ''),
+                'challenge_type': ch.get('type'),
+                'message': getattr(result, 'message', '') or 'unionLogin 触发风控滑块，请完成滑块后重试',
+            })
         if result.success:
             state.accounts[phone] = {
                 'token': result.token,
+                # loginToken（unionLogin accessToken）：请求头 duloginToken/cookieToken 用
+                'login_token': getattr(result, 'login_token', ''),
                 'user_id': result.user_id,
                 'user_name': result.user_name,
                 'login_time': datetime.now().isoformat(),
             }
             state.current_account = phone
             state.save_state()
+            _pending_login_tokens.pop(phone, None)  # 会话已消费，清除缓存
             log(f'登录成功: {phone} ({result.user_name})')
         if not result.success:
             msg = result.response_text[:200]
@@ -139,14 +168,27 @@ def api_login():
             except Exception:
                 code = ''
             if code == '714':
-                msg = ('登录被风控拦截（code 714）。可能原因：验证码已过期/已使用、操作频率过快、'
-                       '或当前设备环境被识别为风险。\n请重新发送验证码并尽快（60秒内）点击登录；'
+                # 解密显示服务端真实 msg（如"账号或验证码错误"），附操作建议
+                real = _plain_fail_msg(result.response_text)
+                msg = (f'登录失败（714）：{real}\n'
+                       '验证码可能已过期/已使用，请重新发送验证码并尽快（60秒内）点击登录；'
                        '若仍失败，建议更换网络环境（如切换手机热点）或间隔1小时后再试。')
+            elif code == '794':
+                # 解密实证（_dec794）：794 加密 data 内 msg="请1分钟后再试"——频率限制而非滑块
+                msg = ('登录请求触发频率限制（服务端提示：请1分钟后再试）。\n'
+                       '请等待 1-2 分钟后重新发送验证码并登录，不要连续快速重试。')
+            elif code == '20006':
+                # 20006但未换取到有效JWT（accessToken解密失败等）：
+                # 服务端msg是"通过"，直接透传会显示"登录失败：通过"造成误解
+                msg = ('登录响应异常（20006但未取得有效会话token），可能为内容解析失败，'
+                       '请重新发送验证码后重试；若连续出现请查看日志。')
             elif code and code not in ('200',):
-                msg = f'登录失败（code {code}）。原始返回：{result.response_text[:150]}'
+                msg = f'登录失败：{_plain_fail_msg(result.response_text)}'
+        # 附加说明（如游客态降级提示）优先于默认文案
+        final_msg = getattr(result, 'message', '') or ('登录成功' if result.success else msg)
         return jsonify({
             'success': result.success,
-            'message': '登录成功' if result.success else msg,
+            'message': final_msg,
         })
     except Exception as e:
         log(f'登录失败: {e}\n{traceback.format_exc()}')
@@ -162,6 +204,9 @@ def api_accounts():
             'user_id': info.get('user_id', ''),
             'user_name': info.get('user_name', ''),
             'current': phone == state.current_account,
+            # token 状态：持久化后前端显示"登录中/无token"
+            'has_token': bool(info.get('token', '')),
+            'login_time': info.get('login_time', ''),
         })
     return jsonify({'accounts': result})
 
@@ -196,9 +241,14 @@ def api_remove_account():
 
 @bp.route('/api/logout', methods=['POST'])
 def api_logout():
-    """退出当前登录账号"""
+    """退出当前登录账号：清除登录态（账号昵称信息保留显示）"""
     if state.current_account:
-        log(f'用户退出登录: {state.current_account}')
+        phone = state.current_account
+        info = state.accounts.get(phone)
+        if info is not None:
+            info['token'] = ''
+            info['login_token'] = ''
         state.current_account = None
         state.save_state()
+        log(f'用户退出登录: {phone}（登录态已清除）')
     return jsonify({'success': True})

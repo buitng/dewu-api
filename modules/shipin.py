@@ -149,6 +149,7 @@ def video_publish_worker(product_id="", interval_minutes=0, cover_image=""):
             token=account_info.get('token', ''),
             user_id=account_info.get('user_id', ''),
             user_name=account_info.get('user_name', ''),
+            login_token=account_info.get('login_token', ''),
         )
 
         log(f'开始视频发布任务，账号: {state.current_account}')
@@ -364,7 +365,11 @@ def video_publish_worker(product_id="", interval_minutes=0, cover_image=""):
 
         log(f'视频发布任务完成!')
     except Exception as e:
-        log(f'视频发布任务异常: {e}\n{traceback.format_exc()}')
+        if '401 Client Error' in str(e):
+            log(f'视频发布任务异常: token 已失效（登录过期），请重新登录后再发布')
+            log(f'  详情: {e}')
+        else:
+            log(f'视频发布任务异常: {e}\n{traceback.format_exc()}')
     finally:
         state.video_publish_running = False
 
@@ -403,6 +408,9 @@ def api_start_video_publish():
         return jsonify({'success': False, 'message': '请先扫描视频'})
     if not state.current_account:
         return jsonify({'success': False, 'message': '请先登录得物账号'})
+    # current_account 存在但 token 已被退出登录清除 → 提示重新登录而非发布 401
+    if not state.accounts.get(state.current_account, {}).get('token'):
+        return jsonify({'success': False, 'message': f'账号 {state.current_account} 无有效token，请重新登录'})
     
     data = request.json
     product_id = data.get('product_id', '')

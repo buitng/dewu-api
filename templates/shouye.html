@@ -427,16 +427,36 @@
             const data = await api('/api/accounts');
             const list = document.getElementById('accountList');
             if (data.accounts.length === 0) { list.innerHTML = '<p style="color:#888;text-align:center;padding:20px;">暂无登录账号</p>'; document.getElementById('headerStatus').textContent = '未登录'; return; }
-            list.innerHTML = data.accounts.map(a => `
+            list.innerHTML = data.accounts.map(a => {
+                const tokenBadge = a.has_token
+                    ? '<span style="background:#e8f8ef;color:#27ae60;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">登录中</span>'
+                    : '<span style="background:#f0f0f0;color:#999;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">无token</span>';
+                const action = a.current
+                    ? '<span style="color:#27ae60;font-weight:600;">当前使用</span>'
+                    : '<button class="btn btn-primary" onclick="useAccount(\'' + a.phone + '\', ' + (a.has_token ? 'true' : 'false') + ')">使用</button>';
+                return `
                 <div class="account-item ${a.current ? 'current' : ''}">
-                    <div class="info"><div class="phone">${a.phone}</div><div class="user">${a.user_name || '未知用户'} | userId: ${a.user_id || '-'}</div></div>
-                    <div>${!a.current ? '<button class="btn btn-primary" onclick="useAccount(\'' + a.phone + '\')">使用</button>' : '<span style="color:#27ae60;font-weight:600;">当前使用</span>'} <button class="btn btn-danger" onclick="removeAccount(\'' + a.phone + '\')" style="margin-left:8px;">删除</button></div>
-                </div>`).join('');
+                    <div class="info"><div class="phone">${a.phone}${tokenBadge}</div><div class="user">${a.user_name || '未知用户'} | userId: ${a.user_id || '-'}${a.device ? ' | 设备: ' + a.device : ''}${a.login_time ? ' | 登录于 ' + a.login_time : ''}</div></div>
+                    <div>${action} <button class="btn btn-danger" onclick="removeAccount(\'' + a.phone + '\')" style="margin-left:8px;">删除</button></div>
+                </div>`;
+            }).join('');
             const current = data.accounts.find(a => a.current);
-            document.getElementById('headerStatus').textContent = current ? '已登录：' + current.phone : '未登录';
+            document.getElementById('headerStatus').textContent = current
+                ? '已登录：' + current.phone + (current.has_token ? '（token已保存）' : '（无token，请重新登录）')
+                : '未登录';
         }
-        
-        async function useAccount(phone) { document.getElementById('phone').value = phone; showAlert('accountAlert', '已填充手机号 ' + phone + '，请点击"发送验证码"', 'info'); }
+
+        // 切换当前使用账号：有 token 直接切换；无 token 回退为填充手机号重新登录
+        async function useAccount(phone, hasToken) {
+            if (!hasToken) {
+                document.getElementById('phone').value = phone;
+                showAlert('accountAlert', '该账号 token 已失效，已填充手机号，请重新发送验证码登录', 'info');
+                return;
+            }
+            const data = await api('/api/use_account', 'POST', { phone });
+            if (data.success) { showAlert('accountAlert', '已切换使用账号 ' + phone + '（发布将使用该账号 token）', 'success'); refreshAccounts(); }
+            else showAlert('accountAlert', '切换失败：' + (data.message || '未知错误'), 'error');
+        }
         async function removeAccount(phone) { if (!confirm('确定删除该账号？')) return; await api('/api/remove_account', 'POST', { phone }); refreshAccounts(); }
         
         function onAiProviderChange() {

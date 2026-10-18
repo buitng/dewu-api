@@ -35,7 +35,6 @@ class Zhuangtai:
         # ---- 账号 ----
         self.accounts = {}  # phone -> {token, user_id, user_name, login_time}
         self.current_account = None
-        self.pending_captcha_tokens = {}  # phone -> 发码init token
         # ---- 图文发布 ----
         self.publish_tasks = []
         self.publish_running = False
@@ -56,37 +55,40 @@ class Zhuangtai:
 
     # ============ 账号 / AI 配置 / 趋势词 持久化 ============
     def load_state(self):
-        """加载保存的状态（记住账号列表，但不保存token，每次登录需要验证码）"""
-        self.current_account = None
+        """加载保存的状态（仅恢复 AI 配置 / 趋势词）。
+
+        登录状态不跨重启：启动即视为登出，清除磁盘上的 token 与设备快照，
+        前端显示未登录，需重新登录（避免重启沿用旧会话造成风控上下文漂移）。
+        """
         if STATE_FILE.exists():
             try:
                 data = json.loads(STATE_FILE.read_text(encoding='utf-8'))
-                saved_accounts = data.get('accounts', {})
-                self.accounts.clear()
-                for phone, info in saved_accounts.items():
-                    self.accounts[phone] = {
-                        'token': '',  # 不保存token，每次登录需要验证码
-                        'user_id': info.get('user_id', ''),
-                        'user_name': info.get('user_name', ''),
-                        'login_time': info.get('login_time', ''),
-                    }
                 if 'ai_config' in data:
                     self.ai_config.update(data['ai_config'])
                 self.trend_words = list(data.get('trend_words', []))
+                # 清掉磁盘上残留的登录态（token/设备快照/当前账号）
+                if data.get('accounts') or data.get('current_account'):
+                    data['accounts'] = {}
+                    data['current_account'] = None
+                    STATE_FILE.write_text(
+                        json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
             except Exception:
                 pass
 
     def save_state(self):
-        """保存状态（保存账号列表，但不保存token，每次登录需要验证码）"""
+        """保存状态（token + 设备快照 + 当前账号，token 有服务端过期时间，失效需重新登录）"""
         accounts_to_save = {}
         for phone, info in self.accounts.items():
             accounts_to_save[phone] = {
+                'token': info.get('token', ''),
                 'user_id': info.get('user_id', ''),
                 'user_name': info.get('user_name', ''),
                 'login_time': info.get('login_time', ''),
+                'device': info.get('device'),
             }
         data = {
             'accounts': accounts_to_save,
+            'current_account': self.current_account,
             'ai_config': self.ai_config,
             'trend_words': self.trend_words,
         }

@@ -92,6 +92,11 @@ def api_start_all_tasks():
             return jsonify({'success': False, 'message': '没有待发布的任务'})
         if state.task_queue_running:
             return jsonify({'success': False, 'message': '任务队列正在运行中'})
+        if not state.current_account:
+            return jsonify({'success': False, 'message': '请先登录得物账号'})
+        # current_account 存在但 token 已被退出登录清除 → 提示重新登录而非发布 401
+        if not state.accounts.get(state.current_account, {}).get('token'):
+            return jsonify({'success': False, 'message': f'账号 {state.current_account} 无有效token，请重新登录'})
         state.task_queue_running = True
 
     # 启动任务队列处理线程
@@ -172,6 +177,7 @@ def task_queue_worker():
                 token=account_info.get('token', ''),
                 user_id=account_info.get('user_id', ''),
                 user_name=account_info.get('user_name', ''),
+                login_token=account_info.get('login_token', ''),
             )
             log(f"使用账号: {state.current_account}")
 
