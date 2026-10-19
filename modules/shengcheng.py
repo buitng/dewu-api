@@ -164,14 +164,14 @@ def get_product_key(dir_path: str) -> str:
     # 用父文件夹名 + 文件夹名作为key，例如 "蓝V图/971CT6001烬余灰"
     return f"{p.parent.name}/{p.name}"
 
-def generate_unique_content(product_info: dict, product_key: str, image_path: str = None) -> dict:
+def generate_unique_content(product_info: dict, product_key: str, image_path: str = None, product_name: str = '') -> dict:
     """生成不重复的内容（考虑历史已使用的内容）"""
     used_data = load_used_content()
     used = used_data.get(product_key, {'titles': [], 'contents': []})
     
     # 最多尝试20次，确保不重复
     for _ in range(20):
-        generated = generate_content_with_ai(product_info, image_path=image_path)
+        generated = generate_content_with_ai(product_info, image_path=image_path, product_name=product_name)
         content_key = generated['content'][:30]
         if generated['title'] not in used['titles'] and content_key not in used['contents']:
             # 记录已使用
@@ -187,7 +187,7 @@ def generate_unique_content(product_info: dict, product_key: str, image_path: st
     log(f'  警告：该单品已使用 {len(used["titles"])} 个不同模板，重置记录以继续生成')
     used_data[product_key] = {'titles': [], 'contents': []}
     save_used_content(used_data)
-    return generate_content_with_ai(product_info)
+    return generate_content_with_ai(product_info, product_name=product_name)
 
 def reset_used_content(product_key: str = None):
     """重置已使用的内容记录（用于清空任务时调用）"""
@@ -248,6 +248,10 @@ def extract_product_info_from_path(dir_path: str) -> dict:
 def generate_content_with_template(product_info: dict) -> dict:
     """基于模板生成内容 - 支持男装/女装/中性，标题10-15字，文案100字+"""
     import random
+    # 非穿搭品类走对应风格模板（美妆/摆件/挂饰/通用）
+    style = classify_style(product_info.get('category', ''))
+    if style != '穿搭':
+        return generate_generic_template(product_info, style)
     sku = product_info.get('sku', '')
     color = product_info.get('color', '')
     category = product_info.get('category', '服饰')
@@ -659,58 +663,261 @@ def generate_content_with_template(product_info: dict) -> dict:
     if matched_trends:
         topics = topics + ' ' + ' '.join(matched_trends)
 
+    # 从文案主题提取话题搜索关键词（品类/颜色/人群/风格词随机抽3个）
+    kw_pool = [category, '每日穿搭', 'ootd', '穿搭分享', '氛围感穿搭', '好物分享']
+    if color_desc:
+        kw_pool.append(f'{color_desc}穿搭')
+    if gender == 'male':
+        kw_pool += ['男生穿搭', '男生通勤', '工装风', '日系穿搭', '美式复古']
+    elif gender == 'female':
+        kw_pool += ['女生穿搭', '温柔风穿搭', '显白穿搭', '韩系穿搭']
+    else:
+        kw_pool += ['穿搭灵感', '百搭单品', '极简风']
+    keywords = ','.join(random.sample(kw_pool, 3))
+
     return {
         'title': random.choice(title_templates),
         'content': random.choice(content_templates),
         'topics': topics,
+        'keywords': keywords,
         'source': 'template',
     }
 
 
-def build_ai_prompt(product_info: dict) -> str:
-    """构建AI生成提示词"""
+# ============ 品类自适应文案 ============
+
+# 品类关键词 → 风格键（从文件夹名/品类下拉自动识别）
+STYLE_KEYWORDS = {
+    '美妆护肤': ['美妆', '护肤', '口红', '唇釉', '粉底', '眼影', '腮红', '香水', '精华', '面霜', '乳液',
+                 '面膜', '防晒', '卸妆', '眉笔', '眼线', '睫毛', '散粉', '气垫', '遮瑕', '身体乳', '护手霜', '香薰'],
+    '摆件手办': ['摆件', '手办', '盲盒', '模型', '公仔', '玩偶', '积木', '高达', '雕像', '潮玩', '娃娃', '毛绒'],
+    '挂饰饰品': ['挂件', '挂饰', '挂绳', '饰品', '项链', '手链', '耳环', '耳钉', '戒指', '手串',
+                 '钥匙扣', '手机链', '包挂', '胸针', '发夹', '发饰', '手机壳'],
+}
+
+# 各风格文案素材（AI prompt 与模板兜底共用；穿搭为默认风格）
+CATEGORY_STYLES = {
+    '穿搭': {
+        'role': '穿搭博主',
+        'sections': '颜色→版型→面料→搭配建议，每段2-3句',
+        'scenes': '咖啡店、通勤、约会、日常出街',
+        'topics': '人群话题（#男生穿搭/#女生穿搭）+ 品类话题 + 季节话题 + 风格话题',
+        'title_examples': [
+            '男生早秋松弛感｜米白色阔腿裤太绝了',
+            '挖到宝藏｜女生早秋温柔风衬衫',
+            '男生早秋韩系｜黑色卫衣氛围感拉满',
+            '女生秋日穿搭｜燕麦色开衫直接拿捏',
+            '早秋闭眼抄作业｜男生卡其色工装裤',
+        ],
+    },
+    '美妆护肤': {
+        'role': '美妆护肤博主',
+        'sections': '上脸/上手感受→质地与妆效→适合的肤质或人群→使用手法或搭配建议，每段2-3句',
+        'scenes': '日常通勤妆、约会妆容、换季护理、熬夜急救',
+        'topics': '品类话题（如#口红/#精华）+ 肤质功效话题（如#黄皮显白/#油皮护肤）+ 场景话题',
+        'title_examples': [
+            '黄皮亲妈口红 涂上直接白一度',
+            '换季救星面霜 敏感肌直接锁死',
+            '熬夜急救精华 早起脸色绝了',
+            '通勤伪素颜妆 关键就在这一步',
+            '被问爆的香水 干净清爽的味道',
+        ],
+        'title_templates': [
+            '黄皮亲妈{category} 涂上直接白一度',
+            '换季救星{category} 敏感肌直接锁死',
+            '熬夜急救{category} 早起脸色绝了',
+            '通勤伪素颜 {category}真的是关键',
+            '被问爆的{category} 质地真的绝了',
+            '油皮亲妈{category} 一整天不斑驳',
+        ],
+        'content_templates': [
+            '谁懂啊！这个{color}{category}真的绝✨\n上脸的第一感觉就是轻薄不假白\n质地好推开，妆效是自带磨皮的感觉👏\n黄皮姐妹放心冲，完全不挑肤\n日常通勤约会一支搞定，直接闭眼入🤍',
+            '终于找到本命{category}了！\n换季皮肤状态差全靠它救回来\n质地清爽好吸收，搓泥完全不存在✅\n敏感肌用着也稳，泛红都压下去了\n坚持用了两周，素颜都有底气了▪️',
+            '被闺蜜问爆的{category}来交作业了\n{color}这个配色一眼心动🤍\n实际使用感比想象中惊艳\n延展性一流，少量多次涂不重手\n出油扛得住，持妆到下班没压力✨',
+        ],
+        'topic_pool': ['口红', '护肤', '黄皮显白', '好物分享', '通勤妆容', '学生党'],
+        'keyword_pool': ['护肤', '美妆', '显白', '油皮', '敏感肌'],
+    },
+    '摆件手办': {
+        'role': '潮玩摆件博主',
+        'sections': '第一眼感受→做工细节（涂装/纹理/比例）→摆放场景→收藏价值，每段2-3句',
+        'scenes': '桌面、书架、展示柜、卧室角落',
+        'topics': '品类话题（如#手办/#盲盒）+ 风格话题 + 情绪话题（如#治愈/#好物分享）',
+        'title_examples': [
+            '拆箱瞬间被治愈 这只太可爱了',
+            '桌面新宠 摆上就不想撤了',
+            '做工细节满分 手感真的绝',
+            '入手不亏 摆着心情都变好',
+            '送自己一份治愈感 太值了',
+        ],
+        'title_templates': [
+            '拆箱瞬间被治愈 {category}太可爱了',
+            '桌面新宠 {category}摆上就不想撤了',
+            '这{category}做工太顶了 细节满分',
+            '入手不亏 {category}摆着心情都变好',
+            '书架新成员 {category}直接封神',
+            '送自己一份治愈感 {category}太值了',
+        ],
+        'content_templates': [
+            '拆箱那一刻直接被萌到🥹\n这个{color}{category}的做工真的没话说\n涂装干净、纹理清晰，比例也刚刚好\n摆在桌面一抬头就能看到，瞬间被治愈✨\n同系列还在犹豫的直接冲，不亏🤍',
+            '入手两周了来交作业！\n{category}细节真的值得细品▪️\n底座稳、配色高级，完全没有廉价感\n放在书架上就是整个房间的焦点👏\n收藏党真的可以闭眼入，摆着看一天都不腻',
+            '好物分享来啦！\n{color}这个{category}第一眼就拿捏我了🤍\n细节处理干净利落，手感也很扎实\n工作累了看一眼，情绪价值直接拉满✨\n送人自留都合适，直接锁死',
+        ],
+        'topic_pool': ['手办', '潮玩', '治愈', '桌面好物', '好物分享', '收藏'],
+        'keyword_pool': ['手办', '潮玩', '盲盒', '治愈', '摆件'],
+    },
+    '挂饰饰品': {
+        'role': '饰品搭配博主',
+        'sections': '设计亮点→材质质感→上身/上包效果→送礼场景，每段2-3句',
+        'scenes': '日常搭配、书包挂件、送礼',
+        'topics': '品类话题（如#挂件/#饰品）+ 风格话题 + 送礼/好物话题',
+        'title_examples': [
+            '书包新挂件 同学都问在哪买',
+            '被问爆的挂件 直接拿链接',
+            '小东西太加分 细节感拉满',
+            '搭配点睛之笔 直接绝了',
+            '送礼不踩雷 心意直接拿捏',
+        ],
+        'title_templates': [
+            '书包新挂件 {category}同学都问在哪买',
+            '被问爆的{category} 直接拿链接',
+            '这个小{category}也太加分了',
+            '搭配点睛之笔 {category}绝了',
+            '送礼不踩雷 {category}拿捏心意',
+            '低头就看到 {category}治愈感满满',
+        ],
+        'content_templates': [
+            '这种小东西真的越看越喜欢🤍\n{color}{category}的质感超出预期\n挂上之后整体氛围感都不一样了✨\n五金件很结实，晃来晃去也不怕掉\n日常出街细节感直接拉满，冲就完了👏',
+            '好物分享来啦！\n最近出门必备就是这个{category}▪️\n设计小巧不夸张，但一眼就能注意到\n搭配什么风格都不违和，百搭度满分\n送朋友也拿得出手，心意感拉满✅',
+            '被问爆的{category}来交作业了！\n{color}这个配色真的耐看🤍\n材质摸起来很舒服，做工挑不出毛病\n每天出门看一眼，心情都好一点✨\n价格也很友好，学生党直接闭眼入',
+        ],
+        'topic_pool': ['挂件', '饰品', '氛围感', '送礼好物', '好物分享', '学生党'],
+        'keyword_pool': ['挂件', '饰品', '搭配', '送礼', '好物'],
+    },
+    '通用': {
+        'role': '好物分享博主',
+        'sections': '外观第一印象→使用体验→细节质感→推荐理由，每段2-3句',
+        'scenes': '日常使用、出街携带、送礼',
+        'topics': '品类话题 + 风格话题 + 好物分享话题（如#好物分享）',
+        'title_examples': [
+            '好物分享 这件真的没让人失望',
+            '入手不亏 用了一周来回馈',
+            '被问爆的宝藏好物 直接冲',
+            '日常必备小物 谁用谁知道',
+            '闭眼入的一件 没有踩雷',
+        ],
+        'title_templates': [
+            '好物分享 这个{category}没让人失望',
+            '入手不亏 {category}用了一周来回馈',
+            '被问爆的{category} 直接冲',
+            '日常必备{category} 谁用谁知道',
+            '这个{category}细节直接拿捏我了',
+            '闭眼入的{category} 没有踩雷',
+        ],
+        'content_templates': [
+            '好物分享来啦！\n这个{color}{category}到手真的惊喜🤍\n外观质感都在线，细节处理很用心✨\n用了几天体验很好，没有失望\n价格也友好，直接闭眼入👏',
+            '被问爆的{category}来交作业了！\n第一眼就被{color}配色吸引🤍\n实际体验比图片还惊艳\n做工扎实，日常用完全够▪️\n需要的朋友直接冲，不踩雷✅',
+        ],
+        'topic_pool': ['好物分享', '宝藏好物', '学生党', '氛围感', '日常好物'],
+        'keyword_pool': ['好物分享', '宝藏好物', '实用好物'],
+    },
+}
+
+
+def classify_style(category: str) -> str:
+    """品类名 → 文案风格键：穿搭/美妆护肤/摆件手办/挂饰饰品/通用"""
+    c = str(category or '').strip()
+    if c in ('美妆护肤', '摆件手办', '挂饰饰品'):
+        return c
+    low = c.lower()
+    if c in ('衬衫', 'T恤', 't恤', '卫衣', '裤子', '外套', '鞋子', '服饰', 'auto', ''):
+        return '穿搭'
+    for style, kws in STYLE_KEYWORDS.items():
+        if any(kw.lower() in low for kw in kws):
+            return style
+    if any(kw in low for kw in ['衣', '裤', '裙', '鞋', '包', '帽', '袜', '巾']):
+        return '穿搭'
+    return '通用'
+
+
+class _SafeDict(dict):
+    """模板format_map占位符缺失时返回空串"""
+    def __missing__(self, key):
+        return ''
+
+
+def generate_generic_template(product_info: dict, style: str) -> dict:
+    """非穿搭品类的模板兜底文案"""
+    import random
+    st = CATEGORY_STYLES[style]
+    color = product_info.get('color', '')
+    category = product_info.get('category', '') or '好物'
+    fill = _SafeDict(color=color, category=category)
+    title = random.choice(st['title_templates']).format_map(fill)
+    content = random.choice(st['content_templates']).format_map(fill)
+    topics = ' '.join(f'#{t}' for t in random.sample(st['topic_pool'], min(4, len(st['topic_pool']))))
+    keywords = ','.join(random.sample(st['keyword_pool'], min(3, len(st['keyword_pool']))))
+    return {'title': title, 'content': content, 'topics': topics, 'keywords': keywords, 'source': 'template'}
+
+
+def build_ai_prompt(product_info: dict, product_name: str = '') -> str:
+    """构建AI生成提示词（品类自适应：穿搭/美妆/摆件/挂饰等）"""
     sku = product_info.get('sku', '')
     color = product_info.get('color', '')
     category = product_info.get('category', '服饰')
     gender = product_info.get('gender', 'neutral')
+    style = classify_style(category)
+    st = CATEGORY_STYLES[style]
 
-    gender_map = {
-        'male': '男装（目标人群：男生/男士，文案风格：帅气、潮流、显高、质感）',
-        'female': '女装（目标人群：女生/女士，文案风格：温柔、显白、显瘦、氛围感）',
-        'neutral': '中性风（男女都可穿，文案风格：百搭、无性别、街头感）',
-    }
-    gender_desc = gender_map.get(gender, gender_map['neutral'])
+    # 商品名称行（来自关联商品/手动输入，AI需贴合真实商品）
+    name_line = ''
+    if product_name:
+        name_line = f'- 商品名称：{product_name}（文案必须贴合此商品名称的真实品类与特征）\n'
+
+    # 人群描述：仅穿搭品类区分男/女装，其他品类用通用人群
+    if style == '穿搭':
+        gender_map = {
+            'male': '男装（目标人群：男生/男士，文案风格：帅气、潮流、显高、质感）',
+            'female': '女装（目标人群：女生/女士，文案风格：温柔、显白、显瘦、氛围感）',
+            'neutral': '中性风（男女都可穿，文案风格：百搭、无性别、街头感）',
+        }
+        gender_desc = gender_map.get(gender, gender_map['neutral'])
+        audience_line = f'- 适用人群：{gender_desc}'
+    else:
+        audience_line = '- 适用人群：学生党/年轻上班族，文案口语化、像朋友分享'
 
     trend_hint = ''
     if state.trend_words:
         trend_hint = f'\n\n当前得物热门搜索趋势词（请从中选择2-3个相关的加入话题）：\n' + '、'.join(state.trend_words[:20])
 
-    return f"""你是一个得物平台的资深穿搭博主，擅长写种草文案。请为以下商品生成一篇得物种草动态：
+    title_examples = '\n'.join(f'- {t}' for t in st['title_examples'])
+
+    return f"""你是一个得物平台的资深{st['role']}，擅长写种草文案。请为以下商品生成一篇得物种草动态：
 
 商品信息：
 - 货号：{sku}
-- 颜色：{color or '未知'}
+{name_line}- 颜色：{color or '未知'}
 - 品类：{category}
-- 适用人群：{gender_desc}
-{trend_hint}
+{audience_line}{trend_hint}
 
-【标题参考示例】（必须10-15字，包含人群+季节+风格+品类，用｜分隔）：
-- 男生早秋松弛感｜米白色阔腿裤太绝了
-- 挖到宝藏｜女生早秋温柔风衬衫
-- 男生早秋韩系｜黑色卫衣氛围感拉满
-- 女生秋日穿搭｜燕麦色开衫直接拿捏
-- 早秋闭眼抄作业｜男生卡其色工装裤
+【标题参考示例】（必须10-15字，贴合{style}品类）：
+{title_examples}
 
 【文案风格要求】（必须100字以上）：
 1. 开头用感叹句吸引注意，如"谁懂啊！"、"救命！"、"终于找到！"
-2. 分段描述：颜色→版型→面料→搭配建议，每段2-3句
+2. 分段描述：{st['sections']}
 3. 适当使用emoji：✨🤍🤎👏✅▪️▫️
-4. 有场景描述：咖啡店、通勤、约会、日常出街
-5. 结尾有推荐语："闭眼入"、"直接冲"、"衣柜必备"
+4. 有场景描述：{st['scenes']}
+5. 结尾有推荐语："闭眼入"、"直接冲"、"无脑入"
 6. 口语化，像朋友分享，不要太官方
 
 【话题要求】（4-6个，用空格分隔）：
-必须包含：人群话题（#男生穿搭/#女生穿搭）+ 品类话题 + 季节话题 + 风格话题
+必须包含：{st['topics']}
+
+【关键词要求】（极其重要）：
+- 从你写的文案内容中提取3个短关键词（每个2-6个字）
+- 关键词必须贴合文案主题，适合用于得物话题搜索
+- 用英文逗号分隔，不要带#号
 
 【极其重要的格式要求】：
 - 只输出纯JSON，不要输出任何其他文字！
@@ -718,7 +925,7 @@ def build_ai_prompt(product_info: dict) -> str:
 - 不要输出解释、说明、备注！
 - 不要加markdown代码块！
 - 不要在JSON前后加任何文字！
-- 直接输出{{"title": "...", "content": "...", "topics": "..."}}
+- 直接输出{{"title": "...", "content": "...", "topics": "...", "keywords": "关键词1,关键词2,关键词3"}}
 
 现在开始，只输出JSON："""
 
@@ -820,15 +1027,17 @@ def parse_ai_response(content: str) -> dict:
         except json.JSONDecodeError:
             pass
     
-    # 方式3：提取title、content、topics字段
+    # 方式3：提取title、content、topics、keywords字段
     title_match = re_mod.search(r'"title"\s*:\s*"([^"]+)"', content)
     content_match = re_mod.search(r'"content"\s*:\s*"([^"]+)"', content)
     topics_match = re_mod.search(r'"topics"\s*:\s*"([^"]+)"', content)
+    keywords_match = re_mod.search(r'"keywords"\s*:\s*"([^"]+)"', content)
     if title_match and content_match:
         return {
             'title': title_match.group(1),
             'content': content_match.group(1),
-            'topics': topics_match.group(1) if topics_match else ''
+            'topics': topics_match.group(1) if topics_match else '',
+            'keywords': keywords_match.group(1) if keywords_match else '',
         }
     
     # 方式4：如果内容本身就是标题和文案（非JSON格式），尝试提取
@@ -869,10 +1078,10 @@ def compress_and_encode_image(image_path: str, max_size: int = 800, quality: int
         return None
 
 
-def generate_content_with_ai(product_info: dict, image_path: str = None) -> dict:
+def generate_content_with_ai(product_info: dict, image_path: str = None, product_name: str = '') -> dict:
     """根据配置的AI提供商生成内容"""
     provider = state.ai_config.get('provider', 'template')
-    prompt = build_ai_prompt(product_info)
+    prompt = build_ai_prompt(product_info, product_name)
 
     try:
         if provider == 'template':
@@ -931,6 +1140,39 @@ def generate_content_with_ai(product_info: dict, image_path: str = None) -> dict
         return generate_content_with_template(product_info)
 
 
+def rank_topics_for_content(generated: dict, context, manual_topics: str = '', target: int = 4) -> str:
+    """合并话题：manual_topics（输入框手填）保留在前，不足 target 的部分由话题榜抽取补齐
+
+    填1个补3个、填2个补2个，以此类推；填满 target 个则不再抽取。
+    关键词来自AI文案keywords字段；榜单不足时用AI原话题兜底。
+    """
+    def parse_names(t: str) -> list:
+        return [x.strip().lstrip('#＃').strip() for x in re.split(r'[#＃\s,，]+', t or '') if x.strip()]
+
+    manual = list(dict.fromkeys(parse_names(manual_topics)))  # 手填话题保留在前（去重）
+    need = max(target - len(manual), 0)
+    if need == 0:
+        return ' '.join(f'#{t}' for t in manual)
+
+    picked_names = []
+    kw_raw = generated.get('keywords', '') or ''
+    keywords = [k.strip() for k in kw_raw.replace('，', ',').split(',') if k.strip()]
+    if keywords:
+        try:
+            from dewu_api import pick_hot_topics
+            picked = pick_hot_topics(keywords, context, pick=need, exclude=manual)
+            picked_names = [p['tagName'] for p in picked]
+        except Exception as e:
+            log(f'话题榜抽取失败: {e}')
+    # 榜单不足时用AI原话题兜底补齐
+    for t in parse_names(generated.get('topics', '')):
+        if len(picked_names) >= need:
+            break
+        if t not in picked_names and t not in manual:
+            picked_names.append(t)
+    return ' '.join(f'#{t}' for t in manual + picked_names)
+
+
 @bp.route('/api/ai_config', methods=['GET', 'POST'])
 def api_ai_config():
     if request.method == 'GET':
@@ -971,6 +1213,7 @@ def api_ai_generate():
     folder_name = data.get('folder_name', '')
     gender = data.get('gender', 'auto')
     category = data.get('category', 'auto')
+    product_name = (data.get('product_name') or '').strip()
     if not folder_name:
         return jsonify({'success': False, 'message': '请提供文件夹名'})
 
@@ -984,7 +1227,23 @@ def api_ai_generate():
     gender_map = {'male': '男装', 'female': '女装', 'neutral': '中性', 'auto': '自动识别'}
     log(f'AI生成内容: {folder_name} (sku={product_info["sku"]}, color={product_info["color"]}, 品类={product_info["category"]}, 人群={gender_map.get(product_info["gender"], "未知")})')
 
-    result = generate_content_with_ai(product_info)
+    result = generate_content_with_ai(product_info, product_name=product_name)
+
+    # 文案关键词 → 话题榜热度排名 → 随机抽取（无登录账号或失败时兜底AI原话题）
+    try:
+        from dewu_api import DewuContext
+        account_info = state.accounts.get(state.current_account, {})
+        if account_info.get('token'):
+            context = DewuContext(
+                token=account_info.get('token', ''),
+                user_id=account_info.get('user_id', ''),
+                user_name=account_info.get('user_name', ''),
+                login_token=account_info.get('login_token', ''),
+            )
+            result['topics'] = rank_topics_for_content(result, context,
+                                                       manual_topics=str(data.get('topics', '')))
+    except Exception as e:
+        log(f'话题榜抽取跳过: {e}')
 
     log(f'内容生成完成 (来源: {result.get("source", "unknown")})')
     return jsonify({'success': True, 'data': result})

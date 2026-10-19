@@ -101,6 +101,10 @@
                 <div class="form-group"><label>验证码</label><input type="text" id="captcha" placeholder="请输入验证码" maxlength="6"></div>
                 <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" id="btnSendCaptcha" onclick="sendCaptcha()">发送验证码</button></div>
                 <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-success" onclick="login()">登录</button></div>
+                <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-warning" onclick="importEmulatorToken()">从模拟器导入</button></div>
+            </div>
+            <div style="padding:8px 12px;background:#fff8e6;border-radius:6px;font-size:13px;color:#8a6d00;margin-bottom:12px;">
+                模拟器导入：先在雷电模拟器得物App里手动登录，再点「从模拟器导入」——自动 root 直读登录态，一年有效、重启不丢，全程无需抓包。
             </div>
             <div id="accountAlert"></div>
             <div class="account-list" id="accountList"></div>
@@ -161,7 +165,7 @@
                 <div class="form-group"><label>默认标题</label><input type="text" id="defaultTitle" placeholder="不填则使用文件夹名"></div>
                 <div class="form-group"><label>默认文案</label><input type="text" id="defaultContent" placeholder="不填则使用默认文案"></div>
                 <div class="form-group"><label>话题</label><input type="text" id="defaultTopics" placeholder="每行一个"></div>
-                <div class="form-group" style="flex: 0 0 150px;"><label>关联商品ID</label><input type="text" id="productId" placeholder="多个用逗号分隔"></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>关联商品ID</label><input type="text" id="productId" placeholder="商品ID或 商品ID:规格ID，点搜商品自动填"></div>
                 <div class="form-group" style="flex: 0 0 150px;"><label>发布间隔（分钟）</label><input type="number" id="intervalMinutes" min="0" value="0"></div>
             </div>
             <div class="row">
@@ -170,10 +174,23 @@
                         <input type="checkbox" id="autoGenerateEach" checked style="width: 18px; height: 18px;"> <span style="font-size: 14px;">每组自动生成不同内容</span>
                     </label>
                 </div>
+                <div class="form-group" style="flex: 1; display: flex; gap: 8px; align-items: flex-end;">
+                    <input type="text" id="topicSearchKeyword" placeholder="输入关键词搜索话题（如：穿搭）" style="flex: 1;" onkeydown="if(event.key==='Enter')searchTopics()">
+                    <button class="btn btn-primary" onclick="searchTopics()">🔍 查询话题</button>
+                </div>
             </div>
+            <div id="topicSearchResult" style="display:none; margin: -8px 0 12px 0; border: 1px solid #e0e0e0; border-radius: 6px; max-height: 260px; overflow-y: auto; background:#fff;"></div>
+            <div class="row">
+                <div class="form-group" style="flex: 1; display: flex; gap: 8px; align-items: flex-end;">
+                    <input type="text" id="productSearchKeyword" placeholder="输入商品货号或名称关键词（如：HQ6457-001），点选后自动填标题和关联商品ID" style="flex: 1;" onkeydown="if(event.key==='Enter')searchProducts()">
+                    <button class="btn btn-primary" onclick="searchProducts()">🔍 搜商品</button>
+                </div>
+            </div>
+            <div id="productSearchResult" style="display:none; margin: -8px 0 12px 0; border: 1px solid #e0e0e0; border-radius: 6px; max-height: 260px; overflow-y: auto; background:#fff;"></div>
             <div class="row">
                 <div class="form-group" style="flex: 0 0 150px;"><label>目标人群</label><select id="aiGender"><option value="auto">自动识别</option><option value="male">男装</option><option value="female">女装</option></select></div>
-                <div class="form-group" style="flex: 0 0 150px;"><label>品类</label><select id="aiCategory"><option value="auto">自动识别</option><option>衬衫</option><option>T恤</option><option>卫衣</option><option>裤子</option></select></div>
+                <div class="form-group" style="flex: 0 0 150px;"><label>品类</label><select id="aiCategory"><option value="auto">自动识别</option><option>衬衫</option><option>T恤</option><option>卫衣</option><option>裤子</option><option>鞋子</option><option>外套</option><option>美妆护肤</option><option>摆件手办</option><option>挂饰饰品</option><option>其他</option></select></div>
+                <div class="form-group" style="flex: 1;"><label>商品名称（可选，AI按此生成更贴合的文案）</label><input type="text" id="defaultProductName" placeholder="粘贴商品标题或名称，如：某个手办/口红色号"></div>
                 <div class="form-group" style="flex: 0 0 auto;"><button class="btn btn-primary" id="btnAiGenerate" onclick="aiGenerate()">✨ AI智能生成</button></div>
             </div>
             <div class="row" style="margin-top: 16px;">
@@ -428,6 +445,9 @@
             const list = document.getElementById('accountList');
             if (data.accounts.length === 0) { list.innerHTML = '<p style="color:#888;text-align:center;padding:20px;">暂无登录账号</p>'; document.getElementById('headerStatus').textContent = '未登录'; return; }
             list.innerHTML = data.accounts.map(a => {
+                const emuBadge = a.source === 'emulator'
+                    ? '<span style="background:#fff3e0;color:#f39c12;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">模拟器</span>'
+                    : '';
                 const tokenBadge = a.has_token
                     ? '<span style="background:#e8f8ef;color:#27ae60;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">登录中</span>'
                     : '<span style="background:#f0f0f0;color:#999;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;">无token</span>';
@@ -436,7 +456,7 @@
                     : '<button class="btn btn-primary" onclick="useAccount(\'' + a.phone + '\', ' + (a.has_token ? 'true' : 'false') + ')">使用</button>';
                 return `
                 <div class="account-item ${a.current ? 'current' : ''}">
-                    <div class="info"><div class="phone">${a.phone}${tokenBadge}</div><div class="user">${a.user_name || '未知用户'} | userId: ${a.user_id || '-'}${a.device ? ' | 设备: ' + a.device : ''}${a.login_time ? ' | 登录于 ' + a.login_time : ''}</div></div>
+                    <div class="info"><div class="phone">${(a.user_name && a.user_name !== '未知用户') ? a.user_name : a.phone}${emuBadge}${tokenBadge}</div><div class="user">${(a.user_name && a.user_name !== '未知用户') ? ('账号ID: ' + (a.user_id || a.phone || '-')) : ((a.user_name || '未知用户') + ' | userId: ' + (a.user_id || '-'))}${a.device ? ' | 设备: ' + a.device : ''}${a.login_time ? ' | 登录于 ' + a.login_time : ''}</div></div>
                     <div>${action} <button class="btn btn-danger" onclick="removeAccount(\'' + a.phone + '\')" style="margin-left:8px;">删除</button></div>
                 </div>`;
             }).join('');
@@ -458,6 +478,18 @@
             else showAlert('accountAlert', '切换失败：' + (data.message || '未知错误'), 'error');
         }
         async function removeAccount(phone) { if (!confirm('确定删除该账号？')) return; await api('/api/remove_account', 'POST', { phone }); refreshAccounts(); }
+
+        // 从模拟器 root 直读登录态导入账号（路线B）：模拟器开机+App已登录即可，零抓包
+        async function importEmulatorToken() {
+            const btn = event ? event.target : null;
+            if (btn) { btn.disabled = true; btn.textContent = '读取中...'; }
+            try {
+                const data = await api('/api/import_emulator_token', 'POST', {});
+                if (data.success) { showAlert('accountAlert', data.message, 'success'); refreshAccounts(); }
+                else showAlert('accountAlert', data.message, 'error');
+            } catch (e) { showAlert('accountAlert', '请求失败：' + e.message, 'error'); }
+            finally { if (btn) { btn.disabled = false; btn.textContent = '从模拟器导入'; } }
+        }
         
         function onAiProviderChange() {
             const provider = document.getElementById('aiProvider').value;
@@ -526,7 +558,7 @@
             document.getElementById('btnStartPublish').disabled = true;
             document.getElementById('btnStopPublish').disabled = false;
             try {
-                const data = await api('/api/start_publish', 'POST', { title, content, topics, product_id: document.getElementById('productId').value, interval_minutes: parseFloat(document.getElementById('intervalMinutes').value) || 0, auto_generate_each: document.getElementById('autoGenerateEach').checked });
+                const data = await api('/api/start_publish', 'POST', { title, content, topics, product_name: document.getElementById('defaultProductName').value, product_id: document.getElementById('productId').value, interval_minutes: parseFloat(document.getElementById('intervalMinutes').value) || 0, auto_generate_each: document.getElementById('autoGenerateEach').checked });
                 if (data.success) showAlert('publishAlert', '发布任务已启动', 'success'); else showAlert('publishAlert', '启动失败：' + data.message, 'error');
             } catch (e) { showAlert('publishAlert', '请求失败：' + e.message, 'error'); }
             document.getElementById('btnStartPublish').disabled = false;
@@ -570,12 +602,79 @@
             taskQueuePolling = setInterval(() => { refreshTaskQueue(); fetch('/api/task_queue').then(r => r.json()).then(data => { const running = data.tasks.some(t => t.status === 'running'); const pending = data.tasks.some(t => t.status === 'pending'); if (running) document.getElementById('taskQueueStatus').innerHTML = '<span style="color:#007bff;">🔄 运行中...</span>'; else if (!pending) { document.getElementById('taskQueueStatus').innerHTML = '<span style="color:#28a745;">✅ 已完成</span>'; clearInterval(taskQueuePolling); taskQueuePolling = null; } }); }, 3000);
         }
         
+        let lastTopicResults = [];
+        let lastProductResults = [];
+
+        function escHtml(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+        function fmtWan(n) { n = parseInt(n) || 0; return n >= 10000 ? (Math.round(n / 1000) / 10) + '万' : String(n); }
+
+        async function searchTopics() {
+            const keyword = document.getElementById('topicSearchKeyword').value.trim();
+            if (!keyword) return showAlert('publishAlert', '请输入话题关键词', 'error');
+            const box = document.getElementById('topicSearchResult');
+            box.innerHTML = '<div style="padding:12px;color:#999;font-size:13px;">搜索中...</div>';
+            box.style.display = 'block';
+            const data = await api('/api/topic_search', 'POST', { keyword });
+            if (!data.success) { box.style.display = 'none'; return showAlert('publishAlert', data.message || '搜索失败', 'error'); }
+            lastTopicResults = data.list || [];
+            if (lastTopicResults.length === 0) { box.innerHTML = '<div style="padding:12px;color:#999;font-size:13px;">未搜索到相关话题</div>'; return; }
+            box.innerHTML = lastTopicResults.map((t, i) =>
+                '<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:13px;">' +
+                '<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>' + escHtml(t.tagName) + '</b> <span style="color:#999;">(ID:' + escHtml(t.tagId) + ')</span></div>' +
+                '<div style="flex:0 0 auto;color:#666;">笔记 ' + fmtWan(t.containsNum) + '</div>' +
+                '<div style="flex:0 0 auto;color:#e67e22;">热度 ' + escHtml(t.hotNumber) + '</div>' +
+                '<button onclick="insertTopic(' + i + ')" style="flex:0 0 auto;padding:4px 10px;background:#007bff;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;">+ 插入</button>' +
+                '</div>').join('');
+        }
+
+        function insertTopic(idx) {
+            const t = lastTopicResults[idx];
+            if (!t) return;
+            const input = document.getElementById('defaultTopics');
+            const existing = input.value.split('\n').map(s => s.trim().replace(/^#+/, ''));
+            if (existing.includes(t.tagName)) return showAlert('publishAlert', '话题已存在: ' + t.tagName, 'info');
+            const cur = input.value.trim();
+            input.value = cur ? cur + '\n#' + t.tagName : '#' + t.tagName;
+            showAlert('publishAlert', '已插入话题 #' + t.tagName, 'success');
+        }
+
+        async function searchProducts() {
+            const keyword = document.getElementById('productSearchKeyword').value.trim();
+            if (!keyword) return showAlert('publishAlert', '请输入商品货号或关键词', 'error');
+            const box = document.getElementById('productSearchResult');
+            box.innerHTML = '<div style="padding:12px;color:#999;font-size:13px;">搜索中...</div>';
+            box.style.display = 'block';
+            const data = await api('/api/product_search', 'POST', { keyword });
+            if (!data.success) { box.style.display = 'none'; return showAlert('publishAlert', data.message || '搜索失败', 'error'); }
+            lastProductResults = data.list || [];
+            if (lastProductResults.length === 0) { box.innerHTML = '<div style="padding:12px;color:#999;font-size:13px;">未搜索到相关商品（提示：得物不支持纯数字ID搜索，请用货号或名称关键词）</div>'; return; }
+            box.innerHTML = lastProductResults.map((p, i) =>
+                '<div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:13px;">' +
+                '<div style="flex:1;min-width:0;">' +
+                '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><b>' + escHtml(p.title) + '</b> <span style="color:#999;">(ID:' + escHtml(p.productId) + (p.articleNumber ? ' 货号:' + escHtml(p.articleNumber) : '') + (p.brandName ? ' ' + escHtml(p.brandName) : '') + ')</span></div>' +
+                '<div style="color:#e67e22;font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">规格: ' + (p.propertyTitle ? escHtml(p.propertyTitle) + ' <span style="color:#999;">(规格ID:' + escHtml(p.propertyId) + ')</span>' : '<span style="color:#999;">无（未分规格）</span>') + '</div>' +
+                '</div>' +
+                '<button onclick="pickProduct(' + i + ')" style="flex:0 0 auto;padding:4px 10px;background:#007bff;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;">选用此规格</button>' +
+                '</div>').join('');
+        }
+
+        function pickProduct(idx) {
+            const p = lastProductResults[idx];
+            if (!p) return;
+            // 带规格：productId 框填 "productId:propertyId"（发布 tag 精确到规格）；无规格填纯 ID
+            const value = p.propertyId ? p.productId + ':' + p.propertyId : p.productId;
+            document.getElementById('productId').value = value;
+            document.getElementById('defaultProductName').value = p.title;
+            document.getElementById('productSearchResult').style.display = 'none';
+            showAlert('publishAlert', '已选用' + (p.propertyTitle ? '规格「' + p.propertyTitle + '」' : '商品') + '，标题和关联商品ID已自动填入', 'success');
+        }
+
         async function aiGenerate() {
             const taskRows = document.querySelectorAll('#taskBody tr');
             if (taskRows.length === 0) return showAlert('publishAlert', '请先扫描图片', 'error');
             const folderName = taskRows[0].querySelector('td:nth-child(2)').textContent.trim();
             const btn = document.getElementById('btnAiGenerate'); btn.disabled = true; btn.textContent = '生成中...';
-            const data = await api('/api/ai_generate', 'POST', { folder_name: folderName, gender: document.getElementById('aiGender').value, category: document.getElementById('aiCategory').value });
+            const data = await api('/api/ai_generate', 'POST', { folder_name: folderName, gender: document.getElementById('aiGender').value, category: document.getElementById('aiCategory').value, product_name: document.getElementById('defaultProductName').value, topics: document.getElementById('defaultTopics').value });
             if (data.success) { document.getElementById('defaultTitle').value = data.data.title || ''; document.getElementById('defaultContent').value = data.data.content || ''; document.getElementById('defaultTopics').value = data.data.topics || ''; showAlert('publishAlert', '内容已生成，可修改后发布', 'success'); } else showAlert('publishAlert', '生成失败: ' + data.message, 'error');
             btn.disabled = false; btn.textContent = '✨ AI智能生成';
         }

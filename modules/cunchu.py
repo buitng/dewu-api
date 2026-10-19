@@ -55,10 +55,12 @@ class Zhuangtai:
 
     # ============ 账号 / AI 配置 / 趋势词 持久化 ============
     def load_state(self):
-        """加载保存的状态（仅恢复 AI 配置 / 趋势词）。
+        """加载保存的状态（恢复 AI 配置 / 趋势词 / 模拟器导入账号）。
 
-        登录状态不跨重启：启动即视为登出，清除磁盘上的 token 与设备快照，
-        前端显示未登录，需重新登录（避免重启沿用旧会话造成风控上下文漂移）。
+        登录状态处理分两类：
+        - 模拟器导入账号（source=emulator 且有 token）：跨重启保留（App 正常登录态，
+          一年有效期，无风控会话漂移问题）
+        - 短信登录账号：启动即清（避免重启沿用旧会话造成风控上下文漂移）
         """
         if STATE_FILE.exists():
             try:
@@ -66,25 +68,37 @@ class Zhuangtai:
                 if 'ai_config' in data:
                     self.ai_config.update(data['ai_config'])
                 self.trend_words = list(data.get('trend_words', []))
-                # 清掉磁盘上残留的登录态（token/设备快照/当前账号）
-                if data.get('accounts') or data.get('current_account'):
-                    data['accounts'] = {}
+                accounts = data.get('accounts') or {}
+                kept = {k: v for k, v in accounts.items()
+                        if isinstance(v, dict) and v.get('source') == 'emulator' and v.get('token')}
+                changed = False
+                if kept != accounts:
+                    data['accounts'] = kept
+                    changed = True
+                if data.get('current_account') and data['current_account'] not in kept:
                     data['current_account'] = None
+                    changed = True
+                if changed:
                     STATE_FILE.write_text(
                         json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+                if kept:
+                    self.accounts = {k: dict(v) for k, v in kept.items()}
+                    self.current_account = data.get('current_account')
             except Exception:
                 pass
 
     def save_state(self):
-        """保存状态（token + 设备快照 + 当前账号，token 有服务端过期时间，失效需重新登录）"""
+        """保存状态（token/login_token + 设备快照 + 当前账号；短信账号重启清、模拟器账号保留）"""
         accounts_to_save = {}
         for phone, info in self.accounts.items():
             accounts_to_save[phone] = {
                 'token': info.get('token', ''),
+                'login_token': info.get('login_token', ''),
                 'user_id': info.get('user_id', ''),
                 'user_name': info.get('user_name', ''),
                 'login_time': info.get('login_time', ''),
                 'device': info.get('device'),
+                'source': info.get('source', ''),
             }
         data = {
             'accounts': accounts_to_save,

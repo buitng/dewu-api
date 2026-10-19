@@ -18,6 +18,8 @@ from dewu_api import (
     build_images_payload,
     build_product_content_tags,
     publish_trend,
+    search_topics,
+    search_product,
 )
 from modules.cunchu import state
 from modules.gongju import natural_sort_key, random_delay
@@ -27,9 +29,58 @@ from modules.shengcheng import (
     generate_unique_content,
     get_product_key,
     reset_used_content,
+    rank_topics_for_content,
 )
 
 bp = Blueprint('fabu', __name__)
+
+
+@bp.route('/api/topic_search', methods=['POST'])
+def api_topic_search():
+    """关键词模糊搜索话题（供前端查看/选择）"""
+    data = request.json or {}
+    keyword = str(data.get('keyword', '')).strip()
+    if not keyword:
+        return jsonify({'success': False, 'message': '请输入关键词'})
+    account_info = state.accounts.get(state.current_account, {})
+    if not account_info.get('token'):
+        return jsonify({'success': False, 'message': '当前无可用账号，请先登录'})
+    try:
+        context = DewuContext(
+            token=account_info.get('token', ''),
+            user_id=account_info.get('user_id', ''),
+            user_name=account_info.get('user_name', ''),
+            login_token=account_info.get('login_token', ''),
+        )
+        items = search_topics(keyword, context)
+        return jsonify({'success': True, 'keyword': keyword, 'list': items})
+    except Exception as e:
+        log(f'话题搜索失败: {e}')
+        return jsonify({'success': False, 'message': f'搜索失败: {e}'})
+
+
+@bp.route('/api/product_search', methods=['POST'])
+def api_product_search():
+    """商品货号/关键词搜索（发布页关联商品：点选后自动填标题+商品ID）"""
+    data = request.json or {}
+    keyword = str(data.get('keyword', '')).strip()
+    if not keyword:
+        return jsonify({'success': False, 'message': '请输入商品货号或关键词'})
+    account_info = state.accounts.get(state.current_account, {})
+    if not account_info.get('token'):
+        return jsonify({'success': False, 'message': '当前无可用账号，请先登录'})
+    try:
+        context = DewuContext(
+            token=account_info.get('token', ''),
+            user_id=account_info.get('user_id', ''),
+            user_name=account_info.get('user_name', ''),
+            login_token=account_info.get('login_token', ''),
+        )
+        items = search_product(keyword, context)
+        return jsonify({'success': True, 'keyword': keyword, 'list': items})
+    except Exception as e:
+        log(f'商品搜索失败: {e}')
+        return jsonify({'success': False, 'message': f'搜索失败: {e}'})
 
 
 @bp.route('/api/scan_images', methods=['POST'])
@@ -143,18 +194,19 @@ def api_start_publish():
     product_id = data.get('product_id', '').strip()
     interval_minutes = float(data.get('interval_minutes', 0) or 0)
     auto_generate_each = data.get('auto_generate_each', True)
+    product_name = (data.get('product_name') or '').strip()
 
     state.publish_running = True
     thread = threading.Thread(
         target=publish_worker,
-        args=(default_title, default_content, default_topics, product_id, interval_minutes, auto_generate_each),
+        args=(default_title, default_content, default_topics, product_id, interval_minutes, auto_generate_each, product_name),
         daemon=True,
     )
     thread.start()
     return jsonify({'success': True})
 
 
-def publish_worker(default_title, default_content, default_topics, product_id="", interval_minutes=0, auto_generate_each=True):
+def publish_worker(default_title, default_content, default_topics, product_id="", interval_minutes=0, auto_generate_each=True, product_name=""):
     """发布工作线程"""
     try:
         account_info = state.accounts.get(state.current_account, {})
@@ -217,10 +269,11 @@ def publish_worker(default_title, default_content, default_topics, product_id=""
                         first_image = None
                         if task.get('images') and len(task['images']) > 0:
                             first_image = task['images'][0]
-                        generated = generate_unique_content(product_info, product_key, image_path=first_image)
+                        generated = generate_unique_content(product_info, product_key, image_path=first_image, product_name=product_name)
                         title = generated['title']
                         content = generated['content']
-                        topics = generated['topics']
+                        # 手填话题保留在前，不足4个的部分由话题榜抽取补齐
+                        topics = rank_topics_for_content(generated, context, manual_topics=default_topics)
                         log(f'  自动生成标题: {title}')
                         log(f'  自动生成文案: {content[:50]}...')
                     

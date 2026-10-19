@@ -2033,22 +2033,148 @@ def build_images_payload(image_urls: list) -> str:
 
 
 def build_product_content_tags(product_ids: list) -> str:
-    """构建关联商品标签"""
+    """构建关联商品标签
+
+    product_ids 支持两种格式（向后兼容）：
+    - "productId:propertyId"（规格级）：对齐 6.0 真实发布抓包——id=SPU、extraId=规格ID、tagSource=2、无 extraInfo
+    - "productId"（纯 SPU）：沿用旧结构 extraId="0" + tagSource=0 + extraInfo
+    """
     tags = []
     for product_id in product_ids:
-        tags.append({
-            'dir': 0,
-            'extraId': "0",
-            'extraInfo': {'goodsId': "0", 'goodsType': "0", 'show': 0},
-            'id': str(product_id),
-            'sourceType': "4",
-            'tagSource': 0,
-            'type': "3",
-            'width': 0,
-            'x': 0,
-            'y': 0,
-        })
+        product_id = str(product_id).strip()
+        if ':' in product_id:
+            pid, _, prop_id = product_id.partition(':')
+            tags.append({
+                'dir': 0,
+                'endFrame': 0,
+                'extraId': prop_id,
+                'id': pid,
+                'sourceType': "4",
+                'startFrame': 0,
+                'tagSource': 2,
+                'type': "3",
+                'width': 0,
+                'x': 0,
+                'y': 0,
+            })
+        else:
+            tags.append({
+                'dir': 0,
+                'extraId': "0",
+                'extraInfo': {'goodsId': "0", 'goodsType': "0", 'show': 0},
+                'id': product_id,
+                'sourceType': "4",
+                'tagSource': 0,
+                'type': "3",
+                'width': 0,
+                'x': 0,
+                'y': 0,
+            })
     return json.dumps(tags, ensure_ascii=False)
+
+
+def search_topics(keyword: str, context: DewuContext, timeout: int = 20) -> list:
+    """关键词模糊搜索话题列表（search-tags 接口，响应为明文 JSON）
+
+    返回精简字段列表：tagName/tagId/containsNum(笔记数)/hotNumber(热度)/thumb(封面)
+    """
+    keyword = keyword.lstrip("#＃").strip()
+    if not keyword:
+        return []
+    ts = current_timestamp_ms()
+    new_sign = build_post_new_sign({"keyword": keyword}, ts,
+                                   uuid_value=_session_uuid(context.token))
+    response = http_call("post",
+        f"https://app.dewu.com/sns-cnt-tag/v1/tag/search-tags?newSign={new_sign}",
+        data={"keyword": keyword},
+        headers=dewu_auth_headers(context, ts),
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    data = response.json()
+    items = []
+    for item in data.get("data", {}).get("list", []) or []:
+        items.append({
+            'tagName': str(item.get('tagName', '')),
+            'tagId': str(item.get('tagId', '')),
+            'containsNum': str(item.get('containsNum', '0')),
+            'hotNumber': item.get('hotNumber', 0),
+            'thumb': str(item.get('thumb', '')),
+        })
+    return items
+
+
+def search_product(keyword: str, context: DewuContext, limit: int = 20,
+                   timeout: int = 20) -> list:
+    """商品搜索（发布页关联商品用的 list-product 接口，6.0 抓包实证）
+
+    keyword 支持货号（如 HQ6457-001）或标题关键词；纯数字 productId 无法命中（得物搜索不索引）。
+    旧 sign 参数可不带（服务端只校验 newSign，盲测实证）。
+    返回规格级记录列表（不去重）：同一 productId 每个规格（propertyId）一条记录，
+    发布挂链接精确到规格就是靠 (productId, propertyId) 对——对应 contentTags 的 (id, extraId)。
+    """
+    keyword = keyword.strip()
+    if not keyword:
+        return []
+    ts = current_timestamp_ms()
+    query = {'title': keyword, 'page': "1", 'ignore_ids': "", 'limit': str(limit),
+             'source': "1", 'abRelationGoods': "1"}
+    new_sign = build_get_new_sign(query, ts, uuid_value=_session_uuid(context.token),
+                                  login_token=context.login_token)
+    url = ("https://app.dewu.com/sns-cnt-tag/v1/search/list-product?"
+           + urllib.parse.urlencode({**query, 'newSign': new_sign}))
+    response = http_call("get", url, headers=dewu_auth_headers(context, ts), timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    items = []
+    for item in data.get("data", {}).get("list", []) or []:
+        pid = str(item.get('productId', '') or '')
+        if not pid:
+            continue
+        items.append({
+            'productId': pid,
+            'propertyId': str(item.get('propertyId', '') or ''),
+            'propertyTitle': str(item.get('propertyTitle', '') or ''),
+            'title': str(item.get('title', '')),
+            'articleNumber': str(item.get('articleNumber', '')),
+            'brandName': str(item.get('brandName', '')),
+            'logoUrl': str(item.get('logoUrl', '')),
+        })
+        if len(items) >= 20:
+            break
+    return items
+
+
+def pick_hot_topics(keywords: list, context: DewuContext, top_n: int = 10,
+                    pick: int = 4, exclude: tuple = (), timeout: int = 20) -> list:
+    """按关键词搜索话题榜：聚合去重 → 按热度降序取前 top_n → 随机抽 pick 个
+
+    exclude: 需排除的话题名（如用户手动填写的），避免重复。
+    返回 [{'tagName','tagId','containsNum','hotNumber'}]，任一关键词失败不影响其余。
+    """
+    exclude_names = {str(e).strip().lstrip('#＃').strip() for e in exclude if str(e).strip()}
+    merged = {}
+    for kw in keywords:
+        kw = str(kw).strip().lstrip('#＃')
+        if not kw:
+            continue
+        try:
+            items = search_topics(kw, context, timeout=timeout)
+            log(f'  话题榜[{kw}]: {len(items)} 条')
+        except Exception as e:
+            log(f'  话题榜[{kw}]搜索失败: {e}')
+            items = []
+        for it in items:
+            tid = it.get('tagId', '')
+            if tid and tid not in merged and it.get('tagName', '') not in exclude_names:
+                merged[tid] = it
+        time.sleep(random.uniform(0.5, 1.5))  # 关键词间抖动，防限流
+    ranked = sorted(merged.values(), key=lambda x: x.get('hotNumber', 0), reverse=True)
+    top = ranked[:top_n]
+    picked = random.sample(top, min(max(pick, 0), len(top)))
+    log(f'  话题榜聚合 {len(merged)} 条，取热度前{len(top)}，随机抽 {len(picked)} 个: '
+        + '、'.join(p['tagName'] for p in picked))
+    return picked
 
 
 def search_topic_id(topic: str, context: DewuContext, timeout: int = 20) -> str:
@@ -2346,13 +2472,40 @@ def publish_trend(
             _capture_waf_cookie(response)
             response.raise_for_status()  # 非2xx会抛HTTPError
             parsed_text = urllib.parse.unquote(response.text)
+        except requests.exceptions.ConnectTimeout as exc:
+            # 连接都没建立 → 请求确定未送达服务端，可安全重试
+            last_text = ""
+            fail_message = f"发布连接失败（第{attempt_no}/{retries}次）: {exc}"
+        except requests.exceptions.ReadTimeout as exc:
+            # 请求已发出、响应未收到：服务端可能已建帖。trend-publish 非幂等（无幂等键），
+            # 重发=重复发布 → 立即终止，让用户先到 App 确认
+            return PublishResult(
+                success=False,
+                response_text="",
+                message="发布请求超时且结果未知（服务端可能已发布成功）。请先到得物App确认是否已发出，"
+                        "确认未发出再重新发布，不要直接重试",
+            )
+        except requests.exceptions.ConnectionError as exc:
+            # 含读响应阶段断连（BrokenPipe/RemoteDisconnected）：请求可能已到服务端 → 不重试
+            return PublishResult(
+                success=False,
+                response_text="",
+                message=f"发布连接中断且结果未知（服务端可能已发布成功），请先到得物App确认后再操作: {exc}",
+            )
         except requests.exceptions.RequestException as exc:
-            last_text = f"发布请求异常: {exc}"
+            # 其余异常（如参数构造问题）：请求大概率未送达 → 可重试
+            last_text = ""
             fail_message = f"发布请求失败（第{attempt_no}/{retries}次）: {exc}"
         else:
             last_text = parsed_text
             details = _parse_publish_response_details(last_text)
-            if details.get("content_id", ""):
+            resp_code = str(_extract_json_value(last_text, "code") or "")
+            if resp_code in ("200", "0"):
+                # 外层 code=200/0 即服务端确认发布成功。data 加密串里的 contentId
+                # 依赖 heracles 解密；2026-10 起服务端新变体（sks 如 "1,1,6"）在加密
+                # 层内叠 zlib 压缩，引擎已自动解压（_heracles_engine），contentId
+                # 新旧变体均可解出。成功判定仍以 code=200 为准，不依赖 contentId
+                # 解密成败（误判失败会导致上层重发/用户手动重发 → 同图同文重复发布）
                 return PublishResult(
                     success=True,
                     response_text=last_text,
@@ -2361,7 +2514,19 @@ def publish_trend(
                     content_id=details.get("content_id", ""),
                     article_url=details.get("article_url", ""),
                 )
-            fail_message = f"HTTP 200但未返回文章ID，发布未落地：{_publish_response_diagnostic(last_text)}"
+            resp_msg = _extract_json_value(last_text, "msg") or _plain_fail_msg(last_text)
+            if resp_code:
+                # 服务端明确拒绝（code 非 200/0）→ 未建帖，可安全重试
+                fail_message = f"服务端明确拒绝（code={resp_code}，第{attempt_no}/{retries}次）: {resp_msg}"
+            else:
+                # HTTP 200 但响应里连 code 都解析不出（含糊响应，疑似已建帖）：
+                # 重发可能重复发布 → 不重试，让用户先到 App 确认
+                return PublishResult(
+                    success=False,
+                    response_text=last_text,
+                    message=f"发布响应无法确认结果（不自动重试以防重复发布）: "
+                            f"{resp_msg or _publish_response_diagnostic(last_text)}",
+                )
         if attempt_no < retries:
             time.sleep(2 + attempt_no)  # 失败后递增退避再重试
 
@@ -2476,9 +2641,9 @@ def _parse_publish_response_details(response_text: str) -> dict:
     if not isinstance(payload, dict):
         return {}
     data = payload.get("data")
-    # data 为加密串（sks 加密响应）：heracles 解密后再解析。
-    # 否则拿不到 contentId 被误判"未落地"→ 自动重试 → 重复发布
-    # （2026-09-12 实测：同一内容发出 3 条）
+    # data 为加密串（sks 加密响应）：heracles 解密提取 contentId（尽力而为）。
+    # 新变体（sks 如 "1,1,6"）= 加密层内再叠 zlib，引擎已自动解压——
+    # 2026-10-19 验证新旧变体均可解出 contentId；解密失败仅影响展示不影响成败判定
     if isinstance(data, str) and data:
         try:
             payload = json.loads(_heracles_decrypt(data))

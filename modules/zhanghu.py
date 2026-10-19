@@ -195,6 +195,48 @@ def api_login():
         return jsonify({'success': False, 'message': str(e)})
 
 
+@bp.route('/api/import_emulator_token', methods=['POST'])
+def api_import_emulator_token():
+    """从模拟器 root 直读登录态 JWT 导入账号（路线B接网页，零抓包）。
+
+    流程：adb 连模拟器 -> su cat App 私有 MMKV -> 提取登录态 JWT（isGuest=false，
+    取 exp 最新）+ duToken -> 存入 accounts（source=emulator）-> 设为当前账号。
+    模拟器账号一年有效期且跨重启保留（见 cunchu.load_state）。
+    """
+    try:
+        import huoqu_token  # 延迟导入：模块级 find_adb 等仅在此路由首次使用时执行
+        hit = huoqu_token.read_token_for_web()
+        if not hit:
+            return jsonify({'success': False, 'message':
+                '未读到登录态 token：请先在模拟器得物App里登录账号（游客态会被跳过），再点导入'})
+        raw, jp, du_tok, src = hit
+        uid = str(jp.get('userId') or '')
+        if not uid:
+            return jsonify({'success': False, 'message': 'JWT 里没有 userId，token 异常'})
+        exp = jp.get('exp') or 0
+        exp_str = datetime.fromtimestamp(exp).strftime('%Y-%m-%d') if exp else '未知'
+        # JWT 不含手机号，账号键用 uid（前端展示昵称 + uid）
+        state.accounts[uid] = {
+            'token': raw,
+            'login_token': du_tok or '',   # duToken 原样（可带 duToken= 前缀，发布时拼复合串）
+            'user_id': uid,
+            'user_name': jp.get('userName') or '',
+            'login_time': datetime.now().isoformat(),
+            'source': 'emulator',
+            'token_exp': exp,
+        }
+        state.current_account = uid
+        state.save_state()
+        log(f'模拟器导入账号: uid={uid} ({jp.get("userName")}) 来源={src} token过期={exp_str}')
+        return jsonify({'success': True, 'message':
+            f'导入成功：{jp.get("userName") or uid}（uid={uid}），token 有效期至 {exp_str}，已设为当前账号'})
+    except RuntimeError as e:
+        return jsonify({'success': False, 'message': str(e)})
+    except Exception as e:
+        log(f'模拟器导入失败: {e}\n{traceback.format_exc()}')
+        return jsonify({'success': False, 'message': f'导入失败：{e}'})
+
+
 @bp.route('/api/accounts')
 def api_accounts():
     result = []
@@ -207,6 +249,7 @@ def api_accounts():
             # token 状态：持久化后前端显示"登录中/无token"
             'has_token': bool(info.get('token', '')),
             'login_time': info.get('login_time', ''),
+            'source': info.get('source', ''),
         })
     return jsonify({'accounts': result})
 
